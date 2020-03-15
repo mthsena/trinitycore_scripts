@@ -1,0 +1,484 @@
+diff --git a/src/server/game/DataStores/DBCStores.cpp b/src/server/game/DataStores/DBCStores.cpp
+index 051b5e8..5a11eca 100644
+--- a/src/server/game/DataStores/DBCStores.cpp
++++ b/src/server/game/DataStores/DBCStores.cpp
+@@ -122,7 +122,7 @@ DBCStorage <HolidaysEntry>                sHolidaysStore(Holidaysfmt);
+ DBCStorage <ItemEntry>                    sItemStore(Itemfmt);
+ DBCStorage <ItemBagFamilyEntry>           sItemBagFamilyStore(ItemBagFamilyfmt);
+ //DBCStorage <ItemCondExtCostsEntry> sItemCondExtCostsStore(ItemCondExtCostsEntryfmt);
+-//DBCStorage <ItemDisplayInfoEntry> sItemDisplayInfoStore(ItemDisplayTemplateEntryfmt); -- not used currently
++DBCStorage <ItemDisplayInfoEntry> sItemDisplayInfoStore(ItemDisplayTemplateEntryfmt);
+ DBCStorage <ItemExtendedCostEntry> sItemExtendedCostStore(ItemExtendedCostEntryfmt);
+ DBCStorage <ItemLimitCategoryEntry> sItemLimitCategoryStore(ItemLimitCategoryEntryfmt);
+ DBCStorage <ItemRandomPropertiesEntry> sItemRandomPropertiesStore(ItemRandomPropertiesfmt);
+@@ -377,7 +377,7 @@ void LoadDBCStores(const std::string& dataPath)
+ 
+     LoadDBC(availableDbcLocales, bad_dbc_files, sItemStore,                   dbcPath, "Item.dbc");
+     LoadDBC(availableDbcLocales, bad_dbc_files, sItemBagFamilyStore,          dbcPath, "ItemBagFamily.dbc");
+-    //LoadDBC(dbcCount, availableDbcLocales, bad_dbc_files, sItemDisplayInfoStore,        dbcPath, "ItemDisplayInfo.dbc");     -- not used currently
++    LoadDBC(availableDbcLocales, bad_dbc_files, sItemDisplayInfoStore,        dbcPath, "ItemDisplayInfo.dbc");
+     //LoadDBC(dbcCount, availableDbcLocales, bad_dbc_files, sItemCondExtCostsStore,       dbcPath, "ItemCondExtCosts.dbc");
+     LoadDBC(availableDbcLocales, bad_dbc_files, sItemExtendedCostStore,       dbcPath, "ItemExtendedCost.dbc");
+     LoadDBC(availableDbcLocales, bad_dbc_files, sItemLimitCategoryStore,      dbcPath, "ItemLimitCategory.dbc");
+diff --git a/src/server/game/DataStores/DBCStores.h b/src/server/game/DataStores/DBCStores.h
+index 128ff7a..00f430e 100644
+--- a/src/server/game/DataStores/DBCStores.h
++++ b/src/server/game/DataStores/DBCStores.h
+@@ -134,7 +134,7 @@ TC_GAME_API extern DBCStorage <GtRegenMPPerSptEntry>         sGtRegenMPPerSptSto
+ TC_GAME_API extern DBCStorage <HolidaysEntry>                sHolidaysStore;
+ TC_GAME_API extern DBCStorage <ItemEntry>                    sItemStore;
+ TC_GAME_API extern DBCStorage <ItemBagFamilyEntry>           sItemBagFamilyStore;
+-//TC_GAME_API extern DBCStorage <ItemDisplayInfoEntry>      sItemDisplayInfoStore; -- not used currently
++TC_GAME_API extern DBCStorage <ItemDisplayInfoEntry>         sItemDisplayInfoStore;
+ TC_GAME_API extern DBCStorage <ItemExtendedCostEntry>        sItemExtendedCostStore;
+ TC_GAME_API extern DBCStorage <ItemLimitCategoryEntry>       sItemLimitCategoryStore;
+ TC_GAME_API extern DBCStorage <ItemRandomPropertiesEntry>    sItemRandomPropertiesStore;
+diff --git a/src/server/game/DataStores/DBCStructure.h b/src/server/game/DataStores/DBCStructure.h
+index 8431f36..6d15721 100644
+--- a/src/server/game/DataStores/DBCStructure.h
++++ b/src/server/game/DataStores/DBCStructure.h
+@@ -850,7 +850,7 @@ struct ItemDisplayInfoEntry
+     uint32      ID;                                         // 0        m_ID
+                                                             // 1        m_modelName[2]
+                                                             // 2        m_modelTexture[2]
+-                                                            // 3        m_inventoryIcon
++    char*       inventoryIcon;                              // 3        m_inventoryIcon
+                                                             // 4        m_geosetGroup[3]
+                                                             // 5        m_flags
+                                                             // 6        m_spellVisualID
+diff --git a/src/server/game/DataStores/DBCfmt.h b/src/server/game/DataStores/DBCfmt.h
+index 1accc81..8dc0392 100644
+--- a/src/server/game/DataStores/DBCfmt.h
++++ b/src/server/game/DataStores/DBCfmt.h
+@@ -75,7 +75,7 @@ char const GtRegenMPPerSptfmt[] = "f";
+ char const Holidaysfmt[] = "niiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiixxsiix";
+ char const Itemfmt[] = "niiiiiii";
+ char const ItemBagFamilyfmt[] = "nxxxxxxxxxxxxxxxxx";
+-//char const ItemDisplayTemplateEntryfmt[] = "nxxxxxxxxxxixxxxxxxxxxx";
++char const ItemDisplayTemplateEntryfmt[] = "nxxxxsxxxxxxxxxxxxxxxxxxx";
+ //char const ItemCondExtCostsEntryfmt[] = "xiii";
+ char const ItemExtendedCostEntryfmt[] = "niiiiiiiiiiiiiix";
+ char const ItemLimitCategoryEntryfmt[] = "nxxxxxxxxxxxxxxxxxii";
+diff --git a/src/server/game/Entities/Player/Player.cpp b/src/server/game/Entities/Player/Player.cpp
+index 3e0f907..a36778e 100644
+--- a/src/server/game/Entities/Player/Player.cpp
++++ b/src/server/game/Entities/Player/Player.cpp
+@@ -16,6 +16,8 @@
+  * with this program. If not, see <http://www.gnu.org/licenses/>.
+  */
+ 
++#include "Transmogrification.h"
++#include "TransmogDisplayVendorConf.h"
+ #include "Player.h"
+ #include "AccountMgr.h"
+ #include "AchievementMgr.h"
+@@ -12096,7 +12098,10 @@ void Player::SetVisibleItemSlot(uint8 slot, Item* pItem)
+ {
+     if (pItem)
+     {
+-        SetUInt32Value(PLAYER_VISIBLE_ITEM_1_ENTRYID + (slot * 2), pItem->GetEntry());
++        if (uint32 entry = sTransmogrification->GetFakeEntry(pItem))
++            SetUInt32Value(PLAYER_VISIBLE_ITEM_1_ENTRYID + (slot * 2), entry);
++        else
++            SetUInt32Value(PLAYER_VISIBLE_ITEM_1_ENTRYID + (slot * 2), pItem->GetEntry());
+         SetUInt16Value(PLAYER_VISIBLE_ITEM_1_ENCHANTMENT + (slot * 2), 0, pItem->GetEnchantmentId(PERM_ENCHANTMENT_SLOT));
+         SetUInt16Value(PLAYER_VISIBLE_ITEM_1_ENCHANTMENT + (slot * 2), 1, pItem->GetEnchantmentId(TEMP_ENCHANTMENT_SLOT));
+     }
+@@ -12226,6 +12231,7 @@ void Player::MoveItemFromInventory(uint8 bag, uint8 slot, bool update)
+ {
+     if (Item* it = GetItemByPos(bag, slot))
+     {
++        sTransmogrification->DeleteFakeEntry(this, it);
+         ItemRemovedQuestCheck(it->GetEntry(), it->GetCount());
+         RemoveItem(bag, slot, update);
+         it->SetNotRefundable(this, false);
+@@ -21477,24 +21483,30 @@ bool Player::BuyItemFromVendorSlot(ObjectGuid vendorguid, uint32 vendorslot, uin
+         return false;
+     }
+ 
+-    if (!(pProto->AllowableClass & getClassMask()) && pProto->Bonding == BIND_WHEN_PICKED_UP && !IsGameMaster())
++    Creature* creature = GetNPCIfCanInteractWith(vendorguid, UNIT_NPC_FLAG_VENDOR);
++    if (!creature)
+     {
+-        SendBuyError(BUY_ERR_CANT_FIND_ITEM, nullptr, item, 0);
++        TC_LOG_DEBUG("network", "Player::BuyItemFromVendorSlot: Vendor (%s) not found or player '%s' (%s) can't interact with him.",
++            vendorguid.ToString().c_str(), GetName().c_str(), GetGUID().ToString().c_str());
++        SendBuyError(BUY_ERR_DISTANCE_TOO_FAR, nullptr, item, 0);
+         return false;
+     }
+ 
+-    if (!IsGameMaster() && ((pProto->Flags2 & ITEM_FLAG2_FACTION_HORDE && GetTeam() == ALLIANCE) || (pProto->Flags2 == ITEM_FLAG2_FACTION_ALLIANCE && GetTeam() == HORDE)))
++    if (creature->GetScriptName() == "NPC_TransmogDisplayVendor")
++    {
++        TransmogDisplayVendorMgr::HandleTransmogrify(this, creature, vendorslot, item);
+         return false;
++    }
+ 
+-    Creature* creature = GetNPCIfCanInteractWith(vendorguid, UNIT_NPC_FLAG_VENDOR);
+-    if (!creature)
++    if (!(pProto->AllowableClass & getClassMask()) && pProto->Bonding == BIND_WHEN_PICKED_UP && !IsGameMaster())
+     {
+-        TC_LOG_DEBUG("network", "Player::BuyItemFromVendorSlot: Vendor (%s) not found or player '%s' (%s) can't interact with him.",
+-            vendorguid.ToString().c_str(), GetName().c_str(), GetGUID().ToString().c_str());
+-        SendBuyError(BUY_ERR_DISTANCE_TOO_FAR, nullptr, item, 0);
++        SendBuyError(BUY_ERR_CANT_FIND_ITEM, nullptr, item, 0);
+         return false;
+     }
+ 
++    if (!IsGameMaster() && ((pProto->Flags2 & ITEM_FLAG2_FACTION_HORDE && GetTeam() == ALLIANCE) || (pProto->Flags2 == ITEM_FLAG2_FACTION_ALLIANCE && GetTeam() == HORDE)))
++        return false;
++
+     if (!sConditionMgr->IsObjectMeetingVendorItemConditions(creature->GetEntry(), item, this, creature))
+     {
+         TC_LOG_DEBUG("condition", "Player::BuyItemFromVendorSlot: Player '%s' (%s) doesn't meed conditions for creature (Entry: %u, Item: %u)",
+diff --git a/src/server/game/Entities/Player/Player.h b/src/server/game/Entities/Player/Player.h
+index ed5dc7e..ff192bd 100644
+--- a/src/server/game/Entities/Player/Player.h
++++ b/src/server/game/Entities/Player/Player.h
+@@ -29,6 +29,7 @@
+ #include "SpellMgr.h"
+ #include "SpellHistory.h"
+ #include "Unit.h"
++#include "Transmogrification.h"
+ #include "TradeData.h"
+ #include "CinematicMgr.h"
+ 
+@@ -129,6 +130,17 @@ struct SpellModifier
+     Aura* const ownerAura;
+ };
+ 
++typedef std::unordered_map<ObjectGuid, uint32> TransmogMapType;
++#ifdef PRESETS
++typedef std::map<uint8, uint32> PresetslotMapType;
++struct PresetData
++{
++    std::string name;
++    PresetslotMapType slotMap; // slotMap[slotId] = entry
++};
++typedef std::map<uint8, PresetData> PresetMapType;
++#endif
++
+ typedef std::unordered_map<uint32, PlayerTalent*> PlayerTalentMap;
+ typedef std::unordered_map<uint32, PlayerSpell*> PlayerSpellMap;
+ typedef std::unordered_set<SpellModifier*> SpellModContainer;
+@@ -2280,6 +2292,11 @@ class TC_GAME_API Player : public Unit, public GridObject<Player>
+         std::string GetMapAreaAndZoneString() const;
+         std::string GetCoordsMapAreaAndZoneString() const;
+ 
++        TransmogMapType transmogMap; // transmogMap[iGUID] = entry
++#ifdef PRESETS
++        PresetMapType presetMap; // presetMap[presetId] = presetData
++#endif
++
+     protected:
+         // Gamemaster whisper whitelist
+         GuidList WhisperList;
+diff --git a/src/server/game/Handlers/SpellHandler.cpp b/src/server/game/Handlers/SpellHandler.cpp
+index 728fda8..5da2b30 100644
+--- a/src/server/game/Handlers/SpellHandler.cpp
++++ b/src/server/game/Handlers/SpellHandler.cpp
+@@ -26,6 +26,7 @@
+ #include "Opcodes.h"
+ #include "Spell.h"
+ #include "Totem.h"
++#include "Transmogrification.h"
+ #include "ScriptMgr.h"
+ #include "GameObjectAI.h"
+ #include "SpellAuraEffects.h"
+@@ -625,7 +626,12 @@ void WorldSession::HandleMirrorImageDataRequest(WorldPacket& recvData)
+             else if (*itr == EQUIPMENT_SLOT_BACK && player->HasFlag(PLAYER_FLAGS, PLAYER_FLAGS_HIDE_CLOAK))
+                 data << uint32(0);
+             else if (Item const* item = player->GetItemByPos(INVENTORY_SLOT_BAG_0, *itr))
+-                data << uint32(item->GetTemplate()->DisplayInfoID);
++            {
++                if (uint32 entry = sTransmogrification->GetFakeEntry(item))
++                    data << uint32(sObjectMgr->GetItemTemplate(entry)->DisplayInfoID);
++                else
++                    data << uint32(item->GetTemplate()->DisplayInfoID);
++            }
+             else
+                 data << uint32(0);
+         }
+diff --git a/src/server/scripts/Custom/custom_script_loader.cpp b/src/server/scripts/Custom/custom_script_loader.cpp
+index dd4b5e9..c0de57a 100644
+--- a/src/server/scripts/Custom/custom_script_loader.cpp
++++ b/src/server/scripts/Custom/custom_script_loader.cpp
+@@ -17,9 +17,13 @@
+ 
+ // This is where scripts' loading functions should be declared:
+ 
++void AddSC_Transmogrification();
++void AddSC_NPC_TransmogDisplayVendor();
+ 
+ // The name of this function should match:
+ // void Add${NameOfDirectory}Scripts()
+ void AddCustomScripts()
+ {
++    AddSC_Transmogrification();
++    AddSC_NPC_TransmogDisplayVendor();
+ }
+diff --git a/src/server/scripts/Spells/spell_generic.cpp b/src/server/scripts/Spells/spell_generic.cpp
+index d0fcd10..1e79761 100644
+--- a/src/server/scripts/Spells/spell_generic.cpp
++++ b/src/server/scripts/Spells/spell_generic.cpp
+@@ -38,6 +38,7 @@
+ #include "SpellScript.h"
+ #include "SpellAuraEffects.h"
+ #include "Vehicle.h"
++#include "Transmogrification.h"
+ 
+ class spell_gen_absorb0_hitlimit1 : public SpellScriptLoader
+ {
+@@ -917,7 +918,12 @@ class spell_gen_clone_weapon_aura : public SpellScriptLoader
+                         if (Player* player = caster->ToPlayer())
+                         {
+                             if (Item* mainItem = player->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_MAINHAND))
+-                                target->SetUInt32Value(UNIT_VIRTUAL_ITEM_SLOT_ID, mainItem->GetEntry());
++                            {
++                                if (uint32 entry = sTransmogrification->GetFakeEntry(mainItem))
++                                    target->SetUInt32Value(UNIT_VIRTUAL_ITEM_SLOT_ID, entry);
++                                else
++                                    target->SetUInt32Value(UNIT_VIRTUAL_ITEM_SLOT_ID, mainItem->GetEntry());
++                            }
+                         }
+                         else
+                             target->SetUInt32Value(UNIT_VIRTUAL_ITEM_SLOT_ID, caster->GetUInt32Value(UNIT_VIRTUAL_ITEM_SLOT_ID));
+@@ -931,7 +937,12 @@ class spell_gen_clone_weapon_aura : public SpellScriptLoader
+                         if (Player* player = caster->ToPlayer())
+                         {
+                             if (Item* offItem = player->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_OFFHAND))
+-                                target->SetUInt32Value(UNIT_VIRTUAL_ITEM_SLOT_ID + 1, offItem->GetEntry());
++                            {
++                                if (uint32 entry = sTransmogrification->GetFakeEntry(offItem))
++                                    target->SetUInt32Value(UNIT_VIRTUAL_ITEM_SLOT_ID + 1, entry);
++                                else
++                                    target->SetUInt32Value(UNIT_VIRTUAL_ITEM_SLOT_ID + 1, offItem->GetEntry());
++                            }
+                         }
+                         else
+                             target->SetUInt32Value(UNIT_VIRTUAL_ITEM_SLOT_ID + 1, caster->GetUInt32Value(UNIT_VIRTUAL_ITEM_SLOT_ID + 1));
+@@ -944,7 +955,12 @@ class spell_gen_clone_weapon_aura : public SpellScriptLoader
+                         if (Player* player = caster->ToPlayer())
+                         {
+                             if (Item* rangedItem = player->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_RANGED))
+-                                target->SetUInt32Value(UNIT_VIRTUAL_ITEM_SLOT_ID + 2, rangedItem->GetEntry());
++                            {
++                                if (uint32 entry = sTransmogrification->GetFakeEntry(rangedItem))
++                                    target->SetUInt32Value(UNIT_VIRTUAL_ITEM_SLOT_ID + 2, entry);
++                                else
++                                    target->SetUInt32Value(UNIT_VIRTUAL_ITEM_SLOT_ID + 2, rangedItem->GetEntry());
++                            }
+                         }
+                         else
+                             target->SetUInt32Value(UNIT_VIRTUAL_ITEM_SLOT_ID + 2, caster->GetUInt32Value(UNIT_VIRTUAL_ITEM_SLOT_ID + 2));
+diff --git a/src/server/worldserver/worldserver.conf.dist b/src/server/worldserver/worldserver.conf.dist
+index 1d17305..767af78 100644
+--- a/src/server/worldserver/worldserver.conf.dist
++++ b/src/server/worldserver/worldserver.conf.dist
+@@ -3786,3 +3786,206 @@ Metric.OverallStatusInterval = 1
+ 
+ #
+ ###################################################################################################
++
++###################################################################################################
++# Transmogrification Settings
++#
++#    Logger.custom.transmog
++#        Description: Transmogrification logging setting, see logger settings
++#        Default:    3, Console Server
++#
++#    Transmogrification.EnableTransmogInfo
++#        Description: Enables / Disables the info button for transmogrification
++#        Default:    1
++#
++#    Transmogrification.TransmogNpcText
++#        Description: The npc_text entry of the info menu for transmogrification
++#        Default:    65000
++#
++#    Transmogrification.Allowed
++#        Description: A list of item entries that are allowed for transmogrification (skips quality and CanUseItem check)
++#                     Example: "25 35674 5623"
++#        Default:    ""
++#
++#    Transmogrification.NotAllowed
++#        Description: A list of item entries that are NOT allowed for transmogrification
++#                     Example: "25 35674 5623"
++#        Default:    ""
++
++Logger.custom.transmog = 3, Console Server
++
++Transmogrification.EnableTransmogInfo = 1
++Transmogrification.TransmogNpcText = 65000
++
++Transmogrification.Allowed = ""
++Transmogrification.NotAllowed = ""
++
++#
++#    COPPER COST
++#
++#    Transmogrification.ScaledCostModifier
++#        Description: A multiplier for the default gold cost (change to 0 for no default cost)
++#        Default:    1.0
++#
++#    Transmogrification.CopperCost
++#        Description: Cost added on top of other costs (can be negative)
++#        Default:    0
++#
++#    For custom gold cost set ScaledCostModifier to 0.0 and CopperCost to what ever cost you want
++
++Transmogrification.ScaledCostModifier = 1.0
++Transmogrification.CopperCost = 0
++
++#
++#    TOKEN COST
++#
++#    Transmogrification.RequireToken
++#        Description: Adds/disables token cost
++#        Default:    0
++#
++#    Transmogrification.TokenEntry
++#        Description: Entry of the token item
++#        Default:    49426
++#
++#    Transmogrification.TokenAmount
++#        Description: Amount of tokens required
++#        Default:    1
++
++Transmogrification.RequireToken = 0
++Transmogrification.TokenEntry = 49426
++Transmogrification.TokenAmount = 1
++
++#
++#    REQUIREMENTS
++#
++#    Transmogrification.AllowPoor
++#        Description: Allow poor quality items to be used as source and target items
++#        Default:    0
++#
++#    Transmogrification.AllowCommon
++#        Description: Allow common quality items to be used as source and target items
++#        Default:    0
++#
++#    Transmogrification.AllowUncommon
++#        Description: Allow uncommon quality items to be used as source and target items
++#        Default:    1
++#
++#    Transmogrification.AllowRare
++#        Description: Allow rare quality items to be used as source and target items
++#        Default:    1
++#
++#    Transmogrification.AllowEpic
++#        Description: Allow epic quality items to be used as source and target items
++#        Default:    1
++#
++#    Transmogrification.AllowLegendary
++#        Description: Allow legendary quality items to be used as source and target items
++#        Default:    0
++#
++#    Transmogrification.AllowArtifact
++#        Description: Allow artifact quality items to be used as source and target items
++#        Default:    0
++#
++#    Transmogrification.AllowHeirloom
++#        Description: Allow heirloom quality items to be used as source and target items
++#        Default:    1
++#
++#    Transmogrification.AllowMixedArmorTypes
++#        Description: Allow cloth items to be transmogrified with plate for example
++#        Default:    0
++#
++#    Transmogrification.AllowMixedWeaponTypes
++#        Description: Allow axe to be transmogrified with dagger for example
++#        Default:    0
++#
++#    Transmogrification.AllowFishingPoles
++#        Description: Allow fishing poles to be transmogrified
++#        Default:    0
++#
++#    Transmogrification.IgnoreReqRace
++#        Description: Ignore required race for source items
++#        Default:    0
++#
++#    Transmogrification.IgnoreReqClass
++#        Description: Ignore required class for source items
++#        Default:    0
++#
++#    Transmogrification.IgnoreReqSkill
++#        Description: Ignore required skill for source items
++#        Default:    0
++#
++#    Transmogrification.IgnoreReqSpell
++#        Description: Ignore required spell for source items
++#        Default:    0
++#
++#    Transmogrification.IgnoreReqLevel
++#        Description: Ignore required level for source items
++#        Default:    0
++#
++#    Transmogrification.IgnoreReqEvent
++#        Description: Ignore required event for source items
++#        Default:    0
++#
++#    Transmogrification.IgnoreReqStats
++#        Description: Ignore stat count > 0 requirement for source items
++#        Default:    0
++
++Transmogrification.AllowPoor = 1
++Transmogrification.AllowCommon = 1
++Transmogrification.AllowUncommon = 1
++Transmogrification.AllowRare = 1
++Transmogrification.AllowEpic = 1
++Transmogrification.AllowLegendary = 1
++Transmogrification.AllowArtifact = 1
++Transmogrification.AllowHeirloom = 1
++
++Transmogrification.AllowMixedArmorTypes = 1
++Transmogrification.AllowMixedWeaponTypes = 1
++Transmogrification.AllowFishingPoles = 1
++
++Transmogrification.IgnoreReqRace = 1
++Transmogrification.IgnoreReqClass = 1
++Transmogrification.IgnoreReqSkill = 1
++Transmogrification.IgnoreReqSpell = 1
++Transmogrification.IgnoreReqLevel = 1
++Transmogrification.IgnoreReqEvent = 1
++Transmogrification.IgnoreReqStats = 1
++
++#
++#    SET FEATURE
++#
++#    Transmogrification.EnableSets
++#        Description: Enables / Disables the set feature. If you want permanent disable, check Transmogrification.h
++#        Default:    1
++#
++#    Transmogrification.MaxSets
++#        Description: Maximum amount of sets a player can save (hardcap at 25)
++#        Default:    10
++#
++#    Transmogrification.EnableSetInfo
++#        Description: Enables / Disables the info button for set fature
++#        Default:    1
++#
++#    Transmogrification.SetNpcText
++#        Description: The npc_text entry of the info menu for the set feature
++#        Default:    65001
++#
++#    Transmogrification.SetCostModifier
++#        Description: A multiplier for the default gold cost (all costs summed together) (change to 0 for no default cost)
++#        Default:    3.0
++#
++#    Transmogrification.SetCopperCost
++#        Description: Cost added on top of other costs (can be negative)
++#        Default:    0
++
++Transmogrification.EnableSets = 1
++Transmogrification.MaxSets = 10
++
++Transmogrification.EnableSetInfo = 1
++Transmogrification.SetNpcText = 65001
++
++Transmogrification.SetCostModifier = 3.0
++Transmogrification.SetCopperCost = 0
++
++#
++###################################################################################################

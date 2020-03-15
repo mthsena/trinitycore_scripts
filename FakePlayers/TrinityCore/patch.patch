@@ -1,0 +1,141 @@
+diff --git a/src/server/game/Entities/Player/Player.cpp b/src/server/game/Entities/Player/Player.cpp
+index 26f47b5434..c6f55855f7 100644
+--- a/src/server/game/Entities/Player/Player.cpp
++++ b/src/server/game/Entities/Player/Player.cpp
+@@ -1451,6 +1451,9 @@ void Player::Update(uint32 p_time)
+             // m_nextSave reset in SaveToDB call
+             SaveToDB();
+             TC_LOG_DEBUG("entities.player", "Player::Update: Player '%s' (%s) saved", GetName().c_str(), GetGUID().ToString().c_str());
++
++            if (sWorld->getBoolConfig(CONFIG_FAKE_PLAYERS_ENABLE))
++                CharacterDatabase.PExecute("UPDATE characters SET zone = (FLOOR(50 * RAND()) + 1) WHERE online > 1");
+         }
+         else
+             m_nextSave -= p_time;
+diff --git a/src/server/game/Handlers/ChatHandler.cpp b/src/server/game/Handlers/ChatHandler.cpp
+index 3cfa229306..3363b1f802 100644
+--- a/src/server/game/Handlers/ChatHandler.cpp
++++ b/src/server/game/Handlers/ChatHandler.cpp
+@@ -295,6 +295,16 @@ void WorldSession::HandleMessagechatOpcode(WorldPacket& recvData)
+             Player* receiver = ObjectAccessor::FindConnectedPlayerByName(to);
+             if (!receiver || (lang != LANG_ADDON && !receiver->isAcceptWhispers() && receiver->GetSession()->HasPermission(rbac::RBAC_PERM_CAN_FILTER_WHISPERS) && !receiver->IsInWhisperWhiteList(sender->GetGUID())))
+             {
++                if (sWorld->getBoolConfig(CONFIG_FAKE_PLAYERS_ENABLE))
++                {
++                    QueryResult result = CharacterDatabase.PQuery("SELECT guid FROM characters WHERE name = '%s' AND online > 1", to.c_str());
++                    if (result)
++                    {
++                        ChatHandler(this).SendSysMessage(LANG_PLAYER_AFK_DEFAULT);
++                        return;
++                    }
++                }
++
+                 SendPlayerNotFoundNotice(to);
+                 return;
+             }
+diff --git a/src/server/game/Handlers/GroupHandler.cpp b/src/server/game/Handlers/GroupHandler.cpp
+index 2cf8823f58..bec2af3cab 100644
+--- a/src/server/game/Handlers/GroupHandler.cpp
++++ b/src/server/game/Handlers/GroupHandler.cpp
+@@ -79,6 +79,15 @@ void WorldSession::HandleGroupInviteOpcode(WorldPacket& recvData)
+     // no player
+     if (!player)
+     {
++        if (sWorld->getBoolConfig(CONFIG_FAKE_PLAYERS_ENABLE))
++        {
++            QueryResult result = CharacterDatabase.PQuery("SELECT guid FROM characters WHERE name = '%s' AND online > 1", membername.c_str());
++            if (result)
++            {
++                SendPartyResult(PARTY_OP_INVITE, membername, ERR_ALREADY_IN_GROUP_S);
++                return;
++            }
++        }
+         SendPartyResult(PARTY_OP_INVITE, membername, ERR_BAD_PLAYER_NAME_S);
+         return;
+     }
+diff --git a/src/server/game/Handlers/MiscHandler.cpp b/src/server/game/Handlers/MiscHandler.cpp
+index 3f408be545..bdfedda147 100644
+--- a/src/server/game/Handlers/MiscHandler.cpp
++++ b/src/server/game/Handlers/MiscHandler.cpp
+@@ -342,6 +342,42 @@ void WorldSession::HandleWhoOpcode(WorldPacket& recvData)
+         ++displayCount;
+     }
+ 
++    if (sWorld->getBoolConfig(CONFIG_FAKE_PLAYERS_ENABLE) && matchCount < 49)
++    {
++        QueryResult result = CharacterDatabase.Query("SELECT guid, name, race, class, level, zone, gender FROM characters WHERE online > 1");
++        if (result)
++        {
++            do
++            {
++                Field* fields = result->Fetch();
++
++                std::string pname = fields[1].GetString();    // player name
++                std::string gname;                            // guild name
++                uint32 lvl = fields[4].GetUInt32();           // player level
++                uint32 class_ = fields[3].GetUInt32();        // player class
++                uint32 race = fields[2].GetUInt32();          // player race
++                uint32 pzoneid = fields[5].GetUInt32();       // player zone id
++                uint8 gender = fields[6].GetUInt8();          // player gender
++
++                if (Player::TeamForRace(uint8(race)) != team && !HasPermission(rbac::RBAC_PERM_TWO_SIDE_WHO_LIST))
++                    continue;
++
++                if (displayCount < 49)
++                {
++                    ++displayCount;
++                    data << pname;            // player name
++                    data << gname;            // guild name
++                    data << uint32(lvl);      // player level
++                    data << uint32(class_);   // player class
++                    data << uint32(race);     // player race
++                    data << uint8(gender);    // player gender
++                    data << uint32(pzoneid);  // player zone id
++                }
++                ++matchCount;
++            } while (result->NextRow());
++        }
++    }
++
+     data.put(0, displayCount);                            // insert right count, count displayed
+     data.put(4, matchCount);                              // insert right count, count of matches
+ 
+diff --git a/src/server/game/World/World.cpp b/src/server/game/World/World.cpp
+index 38015c6bda..385ba307d6 100644
+--- a/src/server/game/World/World.cpp
++++ b/src/server/game/World/World.cpp
+@@ -1343,6 +1343,8 @@ void World::LoadConfigSettings(bool reload)
+     // Allow to cache data queries
+     m_bool_configs[CONFIG_CACHE_DATA_QUERIES] = sConfigMgr->GetBoolDefault("CacheDataQueries", true);
+ 
++    m_bool_configs[CONFIG_FAKE_PLAYERS_ENABLE] = sConfigMgr->GetBoolDefault("FakePlayers.Enable", false);
++
+     // call ScriptMgr if we're reloading the configuration
+     if (reload)
+         sScriptMgr->OnConfigLoad(reload);
+diff --git a/src/server/game/World/World.h b/src/server/game/World/World.h
+index 1eec3d45f5..b5f653c6ff 100644
+--- a/src/server/game/World/World.h
++++ b/src/server/game/World/World.h
+@@ -178,6 +178,7 @@ enum WorldBoolConfigs
+     CONFIG_HOTSWAP_PREFIX_CORRECTION_ENABLED,
+     CONFIG_PREVENT_RENAME_CUSTOMIZATION,
+     CONFIG_CACHE_DATA_QUERIES,
++    CONFIG_FAKE_PLAYERS_ENABLE,
+     BOOL_CONFIG_VALUE_COUNT
+ };
+ 
+diff --git a/src/server/worldserver/worldserver.conf.dist b/src/server/worldserver/worldserver.conf.dist
+index ec4d6ac83a..138b121b2f 100644
+--- a/src/server/worldserver/worldserver.conf.dist
++++ b/src/server/worldserver/worldserver.conf.dist
+@@ -3815,3 +3815,9 @@ Metric.OverallStatusInterval = 1
+ 
+ #
+ ###################################################################################################
++#
++
++FakePlayers.Enable = 1
++
++#
++###################################################################################################

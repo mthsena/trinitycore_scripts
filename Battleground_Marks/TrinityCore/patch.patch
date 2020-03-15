@@ -1,0 +1,33 @@
+diff --git a/src/server/game/Battlegrounds/Battleground.cpp b/src/server/game/Battlegrounds/Battleground.cpp
+index e091df1..8a08922 100644
+--- a/src/server/game/Battlegrounds/Battleground.cpp
++++ b/src/server/game/Battlegrounds/Battleground.cpp
+@@ -806,6 +806,28 @@ void Battleground::EndBattleground(uint32 winner)
+         // Reward winner team
+         if (team == winner)
+         {
++            switch (player->GetZoneId())
++            {
++            case 3277: // Warsong Gulch
++                player->AddItem(20558, 1);
++                break;
++            case 3358: // Arathi Basin
++                player->AddItem(20559, 1);
++                break;
++            case 3820: // Eye of the Storm
++                player->AddItem(29024, 1);
++                break;
++            case 4710: // Isle of Conquest
++                player->AddItem(47395, 1);
++                break;
++            case 4384: // Strand of the Ancients
++                player->AddItem(42425, 1);
++                break;
++            case 2597: // Alterac Valley
++                player->AddItem(20560, 1);
++                break;
++            }
++
+             if (IsRandom() || BattlegroundMgr::IsBGWeekend(GetTypeID()))
+             {
+                 UpdatePlayerScore(player, SCORE_BONUS_HONOR, GetBonusHonorFromKill(winner_kills));

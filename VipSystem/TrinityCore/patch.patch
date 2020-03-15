@@ -1,0 +1,238 @@
+diff --git a/src/common/Common.h b/src/common/Common.h
+index af9b9b1..6cf4813 100644
+--- a/src/common/Common.h
++++ b/src/common/Common.h
+@@ -108,10 +108,11 @@ enum TimeConstants
+ enum AccountTypes
+ {
+     SEC_PLAYER         = 0,
+-    SEC_MODERATOR      = 1,
+-    SEC_GAMEMASTER     = 2,
+-    SEC_ADMINISTRATOR  = 3,
+-    SEC_CONSOLE        = 4                                  // must be always last in list, accounts must have less security level always also
++    SEC_VIP            = 1,
++    SEC_MODERATOR      = 2,
++    SEC_GAMEMASTER     = 3,
++    SEC_ADMINISTRATOR  = 4,
++    SEC_CONSOLE        = 5                                  // must be always last in list, accounts must have less security level always also
+ };
+ 
+ enum LocaleConstant
+diff --git a/src/server/game/Accounts/RBAC.h b/src/server/game/Accounts/RBAC.h
+index 907a650..05f9e41 100644
+--- a/src/server/game/Accounts/RBAC.h
++++ b/src/server/game/Accounts/RBAC.h
+@@ -750,6 +750,8 @@ enum RBACPermissions
+     RBAC_PERM_COMMAND_RELOAD_QUEST_GREETING                  = 843, // not on 3.3.5a
+     RBAC_PERM_COMMAND_DEBUG_SEND_PLAYSCENE                   = 844, // not on 3.3.5a
+ 
++    RBAC_PERM_COMMAND_CUSTOM_VIPSYSTEM                       = 1000,
++
+     // custom permissions 1000+
+     RBAC_PERM_MAX
+ };
+diff --git a/src/server/game/Battlegrounds/ArenaTeam.cpp b/src/server/game/Battlegrounds/ArenaTeam.cpp
+index f1747bc..69a24f5 100644
+--- a/src/server/game/Battlegrounds/ArenaTeam.cpp
++++ b/src/server/game/Battlegrounds/ArenaTeam.cpp
+@@ -25,6 +25,7 @@
+ #include "ArenaTeamMgr.h"
+ #include "WorldSession.h"
+ #include "Opcodes.h"
++#include "VipSystem.h"
+ 
+ ArenaTeam::ArenaTeam()
+     : TeamId(0), Type(0), TeamName(), CaptainGuid(), BackgroundColor(0), EmblemStyle(0), EmblemColor(0),
+@@ -868,6 +869,8 @@ void ArenaTeam::UpdateArenaPointsHelper(std::map<uint32, uint32>& playerPoints)
+         if (itr->WeekGames >= requiredGames)
+             pointsToAdd = GetPoints(itr->PersonalRating);
+ 
++        sVipSystem->ModifyRate(sObjectMgr->GetPlayerAccountIdByGUID(itr->Guid), VIP_RATE_ARENA, (int&)pointsToAdd);
++
+         std::map<uint32, uint32>::iterator plr_itr = playerPoints.find(itr->Guid.GetCounter());
+         if (plr_itr != playerPoints.end())
+         {
+diff --git a/src/server/game/Entities/Player/Player.cpp b/src/server/game/Entities/Player/Player.cpp
+index 3e0f907..7fd1ede 100644
+--- a/src/server/game/Entities/Player/Player.cpp
++++ b/src/server/game/Entities/Player/Player.cpp
+@@ -81,6 +81,7 @@
+ #include "WorldPacket.h"
+ #include "WorldSession.h"
+ #include "GameObjectAI.h"
++#include "VipSystem.h"
+ 
+ #define ZONE_UPDATE_INTERVAL (1*IN_MILLISECONDS)
+ 
+@@ -5288,7 +5289,11 @@ void Player::LeaveLFGChannel()
+ 
+ void Player::UpdateDefense()
+ {
+-    if (UpdateSkill(SKILL_DEFENSE, sWorld->getIntConfig(CONFIG_SKILL_GAIN_DEFENSE)))
++    uint32 value = sWorld->getIntConfig(CONFIG_SKILL_GAIN_DEFENSE);
++
++    sVipSystem->ModifyRate(GetSession()->GetAccountId(), VIP_RATE_SKILL, (int&)value);
++
++    if (UpdateSkill(SKILL_DEFENSE, value))
+         UpdateDefenseBonusesMod(); // update dependent from defense skill part
+ }
+ 
+@@ -5732,6 +5737,8 @@ bool Player::UpdateCraftSkill(uint32 spellid)
+ 
+             uint32 craft_skill_gain = sWorld->getIntConfig(CONFIG_SKILL_GAIN_CRAFTING);
+ 
++            sVipSystem->ModifyRate(GetSession()->GetAccountId(), VIP_RATE_CRAFTING, (int&)craft_skill_gain);
++
+             return UpdateSkillPro(_spell_idx->second->skillId, SkillGainChance(SkillValue,
+                 _spell_idx->second->max_value,
+                 (_spell_idx->second->max_value + _spell_idx->second->min_value)/2,
+@@ -5749,6 +5756,8 @@ bool Player::UpdateGatherSkill(uint32 SkillId, uint32 SkillValue, uint32 RedLeve
+ 
+     uint32 gathering_skill_gain = sWorld->getIntConfig(CONFIG_SKILL_GAIN_GATHERING);
+ 
++    sVipSystem->ModifyRate(GetSession()->GetAccountId(), VIP_RATE_GATHERING, (int&)gathering_skill_gain);
++
+     // For skinning and Mining chance decrease with level. 1-74 - no decrease, 75-149 - 2 times, 225-299 - 8 times
+     switch (SkillId)
+     {
+@@ -5800,6 +5809,9 @@ bool Player::UpdateFishingSkill()
+         m_fishingSteps = 0;
+ 
+         uint32 gathering_skill_gain = sWorld->getIntConfig(CONFIG_SKILL_GAIN_GATHERING);
++
++        sVipSystem->ModifyRate(GetSession()->GetAccountId(), VIP_RATE_GATHERING, (int&)gathering_skill_gain);
++
+         return UpdateSkillPro(SKILL_FISHING, 100*10, gathering_skill_gain);
+     }
+ 
+@@ -5889,6 +5901,8 @@ void Player::UpdateWeaponSkill(WeaponAttackType attType)
+ 
+     uint32 weapon_skill_gain = sWorld->getIntConfig(CONFIG_SKILL_GAIN_WEAPON);
+ 
++    sVipSystem->ModifyRate(GetSession()->GetAccountId(), VIP_RATE_SKILL, (int&)weapon_skill_gain);
++
+     Item* tmpitem = GetWeaponForAttack(attType, true);
+     if (!tmpitem && attType == BASE_ATTACK)
+     {
+@@ -6530,6 +6544,8 @@ void Player::CheckAreaExploreAndOutdoor()
+                     XP = uint32(sObjectMgr->GetBaseXP(areaEntry->area_level)*sWorld->getRate(RATE_XP_EXPLORE));
+                 }
+ 
++                sVipSystem->ModifyRate(GetSession()->GetAccountId(), VIP_RATE_XP, (int&)XP);
++
+                 GiveXP(XP, nullptr);
+                 SendExplorationExperience(areaId, XP);
+             }
+@@ -6882,6 +6898,9 @@ bool Player::RewardHonor(Unit* victim, uint32 groupsize, int32 honor, bool pvpto
+     }
+ 
+     honor_f *= sWorld->getRate(RATE_HONOR);
++
++    sVipSystem->ModifyRate(GetSession()->GetAccountId(), VIP_RATE_HONOR, (int&)honor_f);
++
+     // Back to int now
+     honor = int32(honor_f);
+     // honor - for show honor points in log
+@@ -15019,6 +15038,8 @@ void Player::RewardQuest(Quest const* quest, uint32 reward, Object* questGiver,
+     for (Unit::AuraEffectList::const_iterator i = ModXPPctAuras.begin(); i != ModXPPctAuras.end(); ++i)
+         AddPct(XP, (*i)->GetAmount());
+ 
++    sVipSystem->ModifyRate(GetSession()->GetAccountId(), VIP_RATE_XP, (int&)XP);
++
+     int32 moneyRew = 0;
+     if (getLevel() < sWorld->getIntConfig(CONFIG_MAX_PLAYER_LEVEL))
+         GiveXP(XP, nullptr);
+diff --git a/src/server/game/Miscellaneous/Formulas.h b/src/server/game/Miscellaneous/Formulas.h
+index b5c6f37..6bf7a37 100644
+--- a/src/server/game/Miscellaneous/Formulas.h
++++ b/src/server/game/Miscellaneous/Formulas.h
+@@ -23,6 +23,8 @@
+ #include "SharedDefines.h"
+ #include "ScriptMgr.h"
+ #include "Player.h"
++#include "WorldSession.h"
++#include "VipSystem.h"
+ 
+ namespace Trinity
+ {
+@@ -189,6 +191,9 @@ namespace Trinity
+                     xpMod *= 1.0f - 2.0f*creature->m_PlayerDamageReq / creature->GetMaxHealth();
+ 
+                 gain = uint32(gain * xpMod);
++
++                sVipSystem->ModifyRate(player->GetSession()->GetAccountId(), VIP_RATE_XP, (int&)gain);
++
+             }
+ 
+             sScriptMgr->OnGainCalculation(gain, player, u);
+diff --git a/src/server/game/Reputation/ReputationMgr.cpp b/src/server/game/Reputation/ReputationMgr.cpp
+index fb2873f..26eff6d 100644
+--- a/src/server/game/Reputation/ReputationMgr.cpp
++++ b/src/server/game/Reputation/ReputationMgr.cpp
+@@ -25,6 +25,7 @@
+ #include "ObjectMgr.h"
+ #include "ScriptMgr.h"
+ #include "WorldSession.h"
++#include "VipSystem.h"
+ 
+ const int32 ReputationMgr::PointsInRank[MAX_REPUTATION_RANK] = {36000, 3000, 3000, 3000, 6000, 12000, 21000, 1000};
+ 
+@@ -367,6 +368,9 @@ bool ReputationMgr::SetOneFactionReputation(FactionEntry const* factionEntry, in
+         {
+             // int32 *= float cause one point loss?
+             standing = int32(floor((float)standing * sWorld->getRate(RATE_REPUTATION_GAIN) + 0.5f));
++
++            sVipSystem->ModifyRate(_player->GetSession()->GetAccountId(), VIP_RATE_REPUTATION, (int&)standing);
++
+             standing += itr->second.Standing + BaseRep;
+         }
+ 
+diff --git a/src/server/game/World/World.cpp b/src/server/game/World/World.cpp
+index 7bbf73d..18a0181 100644
+--- a/src/server/game/World/World.cpp
++++ b/src/server/game/World/World.cpp
+@@ -2106,6 +2106,8 @@ void World::Update(uint32 diff)
+     ///- Update the game time and check for shutdown time
+     _UpdateGameTime();
+ 
++    LoginDatabase.PQuery("DELETE FROM account_access WHERE gmlevel = %u AND vipTime < UNIX_TIMESTAMP()", SEC_VIP);
++
+     /// Handle daily quests reset time
+     if (m_gameTime > m_NextDailyQuestReset)
+     {
+diff --git a/src/server/scripts/Custom/custom_script_loader.cpp b/src/server/scripts/Custom/custom_script_loader.cpp
+index dd4b5e9..c72a7d0 100644
+--- a/src/server/scripts/Custom/custom_script_loader.cpp
++++ b/src/server/scripts/Custom/custom_script_loader.cpp
+@@ -17,9 +17,11 @@
+ 
+ // This is where scripts' loading functions should be declared:
+ 
++void AddSC_VipSystemCommands();
+ 
+ // The name of this function should match:
+ // void Add${NameOfDirectory}Scripts()
+ void AddCustomScripts()
+ {
++    AddSC_VipSystemCommands();
+ }
+diff --git a/src/server/worldserver/worldserver.conf.dist b/src/server/worldserver/worldserver.conf.dist
+index 1d17305..998d32a 100644
+--- a/src/server/worldserver/worldserver.conf.dist
++++ b/src/server/worldserver/worldserver.conf.dist
+@@ -3786,3 +3786,15 @@ Metric.OverallStatusInterval = 1
+ 
+ #
+ ###################################################################################################
++#
++
++Vip.Rate.XP          = 2
++Vip.Rate.Honor       = 2
++Vip.Rate.Arena       = 2
++Vip.Rate.Reputation  = 2
++Vip.Rate.Skill       = 2
++Vip.Rate.Crafting    = 2
++Vip.Rate.Gathering   = 2
++
++#
++###################################################################################################

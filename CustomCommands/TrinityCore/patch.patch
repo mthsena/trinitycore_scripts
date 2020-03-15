@@ -1,0 +1,43 @@
+diff --git a/src/server/game/Accounts/RBAC.h b/src/server/game/Accounts/RBAC.h
+index 0881ffa78e..66c7aa8b09 100644
+--- a/src/server/game/Accounts/RBAC.h
++++ b/src/server/game/Accounts/RBAC.h
+@@ -758,6 +758,22 @@ enum RBACPermissions
+     RBAC_PERM_COMMAND_RELOAD_AREATRIGGER_TEMPLATE            = 851, // not on 3.3.5a
+     RBAC_PERM_COMMAND_GO_OFFSET                              = 852,
+ 
++    RBAC_PERM_COMMAND_CUSTOM_CHAT                            = 1001,
++    RBAC_PERM_COMMAND_CUSTOM_BUFF                            = 1002,
++    RBAC_PERM_COMMAND_CUSTOM_SHOP                            = 1003,
++    RBAC_PERM_COMMAND_CUSTOM_MAIL                            = 1004,
++    RBAC_PERM_COMMAND_CUSTOM_BANK                            = 1005,
++    RBAC_PERM_COMMAND_CUSTOM_MAXSKILLS                       = 1006,
++    RBAC_PERM_COMMAND_CUSTOM_TELE                            = 1007,
++    RBAC_PERM_COMMAND_CUSTOM_SCALE                           = 1008,
++    RBAC_PERM_COMMAND_CUSTOM_HOVER                           = 1009,
++    RBAC_PERM_COMMAND_CUSTOM_CUSTOMIZE                       = 1010,
++    RBAC_PERM_COMMAND_CUSTOM_CHANGERACE                      = 1011,
++    RBAC_PERM_COMMAND_CUSTOM_CHANGEFACTION                   = 1012,
++    RBAC_PERM_COMMAND_CUSTOM_TRANSFER                        = 1013,
++    RBAC_PERM_COMMAND_CUSTOM_CASTALL                         = 1014,
++    RBAC_PERM_COMMAND_CUSTOM_SUMMONALL                       = 1015,
++
+     // custom permissions 1000+
+     RBAC_PERM_MAX
+ };
+diff --git a/src/server/scripts/Custom/custom_script_loader.cpp b/src/server/scripts/Custom/custom_script_loader.cpp
+index b74145a18c..510f277caf 100644
+--- a/src/server/scripts/Custom/custom_script_loader.cpp
++++ b/src/server/scripts/Custom/custom_script_loader.cpp
+@@ -17,9 +17,11 @@
+ 
+ // This is where scripts' loading functions should be declared:
+ 
++void AddSC_CustomCommands();
+ 
+ // The name of this function should match:
+ // void Add${NameOfDirectory}Scripts()
+ void AddCustomScripts()
+ {
++    AddSC_CustomCommands();
+ }

@@ -1,0 +1,22 @@
+diff --git a/src/server/game/Entities/Player/Player.cpp b/src/server/game/Entities/Player/Player.cpp
+index 4656b0a..b232fcb 100644
+--- a/src/server/game/Entities/Player/Player.cpp
++++ b/src/server/game/Entities/Player/Player.cpp
+@@ -81,6 +81,7 @@
+ #include "WorldPacket.h"
+ #include "WorldSession.h"
+ #include "GameObjectAI.h"
++#include "../scripts/Custom/CustomExtendedCost/CustomExtendedCost.h"
+ 
+ #define ZONE_UPDATE_INTERVAL (1*IN_MILLISECONDS)
+ 
+@@ -21577,6 +21578,9 @@ bool Player::BuyItemFromVendorSlot(ObjectGuid vendorguid, uint32 vendorslot, uin
+         }
+     }
+ 
++    if (sCustomExtendedCost->IsEnabled(creature->GetEntry(), item))
++        sCustomExtendedCost->Initialize(this, creature->GetEntry(), item);
++
+     if ((bag == NULL_BAG && slot == NULL_SLOT) || IsInventoryPos(bag, slot))
+     {
+         if (!_StoreOrEquipNewItem(vendorslot, item, count, bag, slot, price, pProto, creature, crItem, true))

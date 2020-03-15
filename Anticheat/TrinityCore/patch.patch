@@ -1,0 +1,106 @@
+diff --git a/src/server/game/Handlers/MovementHandler.cpp b/src/server/game/Handlers/MovementHandler.cpp
+index c3cf39488f..d6aa1e220a 100644
+--- a/src/server/game/Handlers/MovementHandler.cpp
++++ b/src/server/game/Handlers/MovementHandler.cpp
+@@ -31,6 +31,7 @@
+ #include "ObjectMgr.h"
+ #include "Vehicle.h"
+ #include "GameTime.h"
++#include "AnticheatMgr.h"
+ 
+ #define MOVEMENT_PACKET_TIME_DELAY 0
+ 
+@@ -359,6 +360,9 @@ void WorldSession::HandleMovementOpcodes(WorldPacket& recvData)
+         plrMover->SetInWater(!plrMover->IsInWater() || plrMover->GetBaseMap()->IsUnderWater(movementInfo.pos.GetPositionX(), movementInfo.pos.GetPositionY(), movementInfo.pos.GetPositionZ()));
+     }
+ 
++    if (plrMover && sAnticheatMgr->configEnable)
++        sAnticheatMgr->StartDetection(plrMover, movementInfo, opcode);
++
+     uint32 mstime = GameTime::GetGameTimeMS();
+     /*----------------------*/
+     if (m_clientTimeDelay == 0)
+diff --git a/src/server/game/Server/WorldSession.cpp b/src/server/game/Server/WorldSession.cpp
+index 7eda06aefe..205affb551 100644
+--- a/src/server/game/Server/WorldSession.cpp
++++ b/src/server/game/Server/WorldSession.cpp
+@@ -874,27 +874,10 @@ void WorldSession::ReadMovementInfo(WorldPacket &data, MovementInfo* mi)
+     REMOVE_VIOLATING_FLAGS(mi->HasMovementFlag(MOVEMENTFLAG_FORWARD) && mi->HasMovementFlag(MOVEMENTFLAG_BACKWARD),
+         MOVEMENTFLAG_FORWARD | MOVEMENTFLAG_BACKWARD);
+ 
+-    //! Cannot walk on water without SPELL_AURA_WATER_WALK except for ghosts
+-    REMOVE_VIOLATING_FLAGS(mi->HasMovementFlag(MOVEMENTFLAG_WATERWALKING) &&
+-        !GetPlayer()->HasAuraType(SPELL_AURA_WATER_WALK) &&
+-        !GetPlayer()->HasAuraType(SPELL_AURA_GHOST),
+-        MOVEMENTFLAG_WATERWALKING);
+-
+     //! Cannot feather fall without SPELL_AURA_FEATHER_FALL
+     REMOVE_VIOLATING_FLAGS(mi->HasMovementFlag(MOVEMENTFLAG_FALLING_SLOW) && !GetPlayer()->HasAuraType(SPELL_AURA_FEATHER_FALL),
+         MOVEMENTFLAG_FALLING_SLOW);
+ 
+-    /*! Cannot fly if no fly auras present. Exception is being a GM.
+-        Note that we check for account level instead of Player::IsGameMaster() because in some
+-        situations it may be feasable to use .gm fly on as a GM without having .gm on,
+-        e.g. aerial combat.
+-    */
+-
+-    REMOVE_VIOLATING_FLAGS(mi->HasMovementFlag(MOVEMENTFLAG_FLYING | MOVEMENTFLAG_CAN_FLY) && GetSecurity() == SEC_PLAYER &&
+-        !GetPlayer()->m_unitMovedByMe->HasAuraType(SPELL_AURA_FLY) &&
+-        !GetPlayer()->m_unitMovedByMe->HasAuraType(SPELL_AURA_MOD_INCREASE_MOUNTED_FLIGHT_SPEED),
+-        MOVEMENTFLAG_FLYING | MOVEMENTFLAG_CAN_FLY);
+-
+     //! Cannot fly and fall at the same time
+     REMOVE_VIOLATING_FLAGS(mi->HasMovementFlag(MOVEMENTFLAG_CAN_FLY | MOVEMENTFLAG_DISABLE_GRAVITY) && mi->HasMovementFlag(MOVEMENTFLAG_FALLING),
+         MOVEMENTFLAG_FALLING);
+diff --git a/src/server/worldserver/worldserver.conf.dist b/src/server/worldserver/worldserver.conf.dist
+index ec4d6ac83a..b5d4596ab3 100644
+--- a/src/server/worldserver/worldserver.conf.dist
++++ b/src/server/worldserver/worldserver.conf.dist
+@@ -3815,3 +3815,47 @@ Metric.OverallStatusInterval = 1
+ 
+ #
+ ###################################################################################################
++# Anticheat Settings
++#
++#    Anticheat.Enable
++#        Description: Enable/Disable.
++#        Default:     0 - Disable
++#                     1 - Enable
++#
++#    Anticheat.Action
++#        Description: Type of action in the detection.
++#        Default:     0 - Global announce for gm.
++#                     1 - Freeze player
++#                     2 - Kick player
++#
++#    Anticheat.MaxReports
++#        Description: Maximum of reports to set action.
++#        Default:     10
++#
++#    Anticheat.RefreshTime
++#        Description: Time in milliseconds to refresh the player warnings.
++#        Default:     5000
++#
++#    Anticheat.AverageSpeed
++#        Description: Depends on your "Rate.MoveSpeed" config.
++#        Default:     1000
++#
++#    Anticheat.IgnoreLatency
++#        Description: Ignores players with latency above the value.
++#        Default:     1000
++#
++#    Anticheat.IgnoreAccountRank
++#        Description: Ignores accounts with rank above the value.
++#        Default:     0
++#
++
++Anticheat.Enable            = 1
++Anticheat.Action            = 0
++Anticheat.MaxReports        = 10
++Anticheat.RefreshTime       = 5000
++Anticheat.AverageSpeed      = 1000
++Anticheat.IgnoreLatency     = 1000
++Anticheat.IgnoreAccountRank = 0
++
++#
++###################################################################################################

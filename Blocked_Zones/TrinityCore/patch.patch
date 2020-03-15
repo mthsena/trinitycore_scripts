@@ -1,0 +1,47 @@
+diff --git a/src/server/worldserver/worldserver.conf.dist b/src/server/worldserver/worldserver.conf.dist
+index ecb5824..b1812a5 100644
+--- a/src/server/worldserver/worldserver.conf.dist
++++ b/src/server/worldserver/worldserver.conf.dist
+@@ -3272,3 +3272,42 @@ PacketSpoof.BanDuration = 86400
+ 
+ #
+ ###################################################################################################
++#
++# Blocked Zones
++#
++#    BZ.Enable
++#        Description: Enable/Disable.
++#        Default:     0 - Disabled
++#                     1 - Enabled
++#
++#    BZ...ZoneID
++#        Description: Zone ID to be blocked.
++#        Default:     0
++#
++#    BZ...Requires.AccountRank
++#        Description: Account rank required to enter the zone.
++#        Default:     0
++#
++#    BZ...Requires.ItemEntry
++#        Description: Item required to enter the zone.
++#        Default:     0
++#
++#    BZ...Requires.ItemCount
++#        Description: Item count required to enter the zone.
++#        Default:     0
++#
++
++BZ.Enable                   = 0
++
++BZ.VIP.ZoneID               = 0
++BZ.VIP.Requires.AccountRank = 0
++BZ.VIP.Requires.ItemEntry   = 0
++BZ.VIP.Requires.ItemCount   = 0
++
++BZ.GM.ZoneID                = 0
++BZ.GM.Requires.AccountRank  = 0
++BZ.GM.Requires.ItemEntry    = 0
++BZ.GM.Requires.ItemCount    = 0
++
++#
++###################################################################################################
