@@ -1,0 +1,470 @@
+diff --git a/src/server/game/Scripting/ScriptLoader.cpp b/src/server/game/Scripting/ScriptLoader.cpp
+index 7b4e272..35a8cdd 100644
+--- a/src/server/game/Scripting/ScriptLoader.cpp
++++ b/src/server/game/Scripting/ScriptLoader.cpp
+@@ -511,7 +511,6 @@ void AddSC_boss_falric();
+ void AddSC_boss_marwyn();
+ void AddSC_boss_lord_marrowgar();       // Icecrown Citadel
+ void AddSC_boss_lady_deathwhisper();
+-void AddSC_boss_icecrown_gunship_battle();
+ void AddSC_boss_deathbringer_saurfang();
+ void AddSC_boss_festergut();
+ void AddSC_boss_rotface();
+@@ -1339,7 +1338,6 @@ void AddNorthrendScripts()
+     AddSC_boss_marwyn();
+     AddSC_boss_lord_marrowgar();        // Icecrown Citadel
+     AddSC_boss_lady_deathwhisper();
+-    AddSC_boss_icecrown_gunship_battle();
+     AddSC_boss_deathbringer_saurfang();
+     AddSC_boss_festergut();
+     AddSC_boss_rotface();
+diff --git a/src/server/scripts/Northrend/CMakeLists.txt b/src/server/scripts/Northrend/CMakeLists.txt
+index e04dcf0..b45340e 100644
+--- a/src/server/scripts/Northrend/CMakeLists.txt
++++ b/src/server/scripts/Northrend/CMakeLists.txt
+@@ -167,7 +167,6 @@ set(scripts_STAT_SRCS
+   Northrend/IcecrownCitadel/icecrown_citadel_teleport.cpp
+   Northrend/IcecrownCitadel/boss_lord_marrowgar.cpp
+   Northrend/IcecrownCitadel/boss_lady_deathwhisper.cpp
+-  Northrend/IcecrownCitadel/boss_icecrown_gunship_battle.cpp
+   Northrend/IcecrownCitadel/boss_deathbringer_saurfang.cpp
+   Northrend/IcecrownCitadel/boss_festergut.cpp
+   Northrend/IcecrownCitadel/boss_rotface.cpp
+diff --git a/src/server/scripts/Northrend/IcecrownCitadel/boss_deathbringer_saurfang.cpp b/src/server/scripts/Northrend/IcecrownCitadel/boss_deathbringer_saurfang.cpp
+index 943be27..6daf1a6 100644
+--- a/src/server/scripts/Northrend/IcecrownCitadel/boss_deathbringer_saurfang.cpp
++++ b/src/server/scripts/Northrend/IcecrownCitadel/boss_deathbringer_saurfang.cpp
+@@ -340,7 +340,6 @@ class boss_deathbringer_saurfang : public CreatureScript
+             void JustReachedHome() override
+             {
+                 _JustReachedHome();
+-                Reset();
+                 instance->SetBossState(DATA_DEATHBRINGER_SAURFANG, FAIL);
+                 instance->DoRemoveAurasDueToSpellOnPlayers(SPELL_MARK_OF_THE_FALLEN_CHAMPION);
+             }
+@@ -384,16 +383,7 @@ class boss_deathbringer_saurfang : public CreatureScript
+             void JustSummoned(Creature* summon) override
+             {
+                 if (Unit* target = SelectTarget(SELECT_TARGET_RANDOM, 1, 0.0f, true))
+-                {
+-                    if (target->GetTransport())
+-                    {
+-                        summon->DespawnOrUnsummon(1);
+-                        EnterEvadeMode();
+-                        return;
+-                    }
+-
+                     summon->AI()->AttackStart(target);
+-                }
+ 
+                 summon->CastSpell(summon, SPELL_BLOOD_LINK_BEAST, true);
+                 summon->CastSpell(summon, SPELL_RESISTANT_SKIN, true);
+@@ -416,12 +406,6 @@ class boss_deathbringer_saurfang : public CreatureScript
+ 
+             void SpellHitTarget(Unit* target, SpellInfo const* spell) override
+             {
+-                if (target->GetTransport())
+-                {
+-                    EnterEvadeMode();
+-                    return;
+-                }
+-
+                 switch (spell->Id)
+                 {
+                     case SPELL_MARK_OF_THE_FALLEN_CHAMPION:
+@@ -591,14 +575,6 @@ class boss_deathbringer_saurfang : public CreatureScript
+                 }
+             }
+ 
+-            bool CanAIAttack(Unit const* target) const override
+-            {
+-                if (target->GetTransport())
+-                    return false;
+-
+-                return true;
+-            }
+-
+             static uint32 const FightWonValue;
+ 
+         private:
+diff --git a/src/server/scripts/Northrend/IcecrownCitadel/icecrown_citadel.h b/src/server/scripts/Northrend/IcecrownCitadel/icecrown_citadel.h
+index 8bf8e5e..4bb6826 100644
+--- a/src/server/scripts/Northrend/IcecrownCitadel/icecrown_citadel.h
++++ b/src/server/scripts/Northrend/IcecrownCitadel/icecrown_citadel.h
+@@ -74,7 +74,7 @@ enum DataTypes
+     // Encounter States/Boss GUIDs
+     DATA_LORD_MARROWGAR             = 0,
+     DATA_LADY_DEATHWHISPER          = 1,
+-    DATA_ICECROWN_GUNSHIP_BATTLE    = 2,
++    DATA_GUNSHIP_EVENT              = 2,
+     DATA_DEATHBRINGER_SAURFANG      = 3,
+     DATA_FESTERGUT                  = 4,
+     DATA_ROTFACE                    = 5,
+@@ -114,7 +114,6 @@ enum DataTypes
+     DATA_HIGHLORD_TIRION_FORDRING   = 37,
+     DATA_ARTHAS_PLATFORM            = 38,
+     DATA_TERENAS_MENETHIL           = 39,
+-    DATA_ENEMY_GUNSHIP              = 40,
+     DATA_UPPERSPIRE_TELE_ACT        = 41,
+ };
+ 
+@@ -173,33 +172,6 @@ enum CreaturesIds
+     NPC_REANIMATED_ADHERENT                     = 38010,
+     NPC_VENGEFUL_SHADE                          = 38222,
+ 
+-    // Icecrown Gunship Battle
+-    NPC_MARTYR_STALKER_IGB_SAURFANG             = 38569,
+-    NPC_ALLIANCE_GUNSHIP_CANNON                 = 36838,
+-    NPC_HORDE_GUNSHIP_CANNON                    = 36839,
+-    NPC_SKYBREAKER_DECKHAND                     = 36970,
+-    NPC_ORGRIMS_HAMMER_CREW                     = 36971,
+-    NPC_IGB_HIGH_OVERLORD_SAURFANG              = 36939,
+-    NPC_IGB_MURADIN_BRONZEBEARD                 = 36948,
+-    NPC_THE_SKYBREAKER                          = 37540,
+-    NPC_ORGRIMS_HAMMER                          = 37215,
+-    NPC_GUNSHIP_HULL                            = 37547,
+-    NPC_TELEPORT_PORTAL                         = 37227,
+-    NPC_TELEPORT_EXIT                           = 37488,
+-    NPC_SKYBREAKER_SORCERER                     = 37116,
+-    NPC_SKYBREAKER_RIFLEMAN                     = 36969,
+-    NPC_SKYBREAKER_MORTAR_SOLDIER               = 36978,
+-    NPC_SKYBREAKER_MARINE                       = 36950,
+-    NPC_SKYBREAKER_SERGEANT                     = 36961,
+-    NPC_KOR_KRON_BATTLE_MAGE                    = 37117,
+-    NPC_KOR_KRON_AXETHROWER                     = 36968,
+-    NPC_KOR_KRON_ROCKETEER                      = 36982,
+-    NPC_KOR_KRON_REAVER                         = 36957,
+-    NPC_KOR_KRON_SERGEANT                       = 36960,
+-    NPC_ZAFOD_BOOMBOX                           = 37184,
+-    NPC_HIGH_CAPTAIN_JUSTIN_BARTLETT            = 37182,
+-    NPC_SKY_REAVER_KORM_BLACKSCAR               = 37833,
+-
+     // Deathbringer Saurfang
+     NPC_DEATHBRINGER_SAURFANG                   = 37813,
+     NPC_BLOOD_BEAST                             = 38508,
+@@ -345,22 +317,6 @@ enum GameObjectsIds
+     GO_ORATORY_OF_THE_DAMNED_ENTRANCE       = 201563,
+     GO_LADY_DEATHWHISPER_ELEVATOR           = 202220,
+ 
+-    // Icecrown Gunship Battle - Horde raid
+-    GO_ORGRIMS_HAMMER_H                     = 201812,
+-    GO_THE_SKYBREAKER_H                     = 201811,
+-    GO_GUNSHIP_ARMORY_H_10N                 = 202178,
+-    GO_GUNSHIP_ARMORY_H_25N                 = 202180,
+-    GO_GUNSHIP_ARMORY_H_10H                 = 202177,
+-    GO_GUNSHIP_ARMORY_H_25H                 = 202179,
+-
+-    // Icecrown Gunship Battle - Alliance raid
+-    GO_ORGRIMS_HAMMER_A                     = 201581,
+-    GO_THE_SKYBREAKER_A                     = 201580,
+-    GO_GUNSHIP_ARMORY_A_10N                 = 201873,
+-    GO_GUNSHIP_ARMORY_A_25N                 = 201874,
+-    GO_GUNSHIP_ARMORY_A_10H                 = 201872,
+-    GO_GUNSHIP_ARMORY_A_25H                 = 201875,
+-
+     // Deathbringer Saurfang
+     GO_SAURFANG_S_DOOR                      = 201825,
+     GO_DEATHBRINGER_S_CACHE_10N             = 202239,
+@@ -462,10 +418,6 @@ enum AchievementCriteriaIds
+ 
+ enum SharedActions
+ {
+-    // Icecrown Gunship Battle
+-    ACTION_ENEMY_GUNSHIP_TALK   = -369390,
+-    ACTION_EXIT_SHIP            = -369391,
+-
+     // Festergut
+     ACTION_FESTERGUT_COMBAT     = -366260,
+     ACTION_FESTERGUT_GAS        = -366261,
+@@ -517,7 +469,6 @@ enum WorldStatesICC
+ 
+ enum AreaIds
+ {
+-    AREA_ICECROWN_CITADEL   = 4812,
+     AREA_THE_FROZEN_THRONE  = 4859
+ };
+ 
+diff --git a/src/server/scripts/Northrend/IcecrownCitadel/icecrown_citadel_teleport.cpp b/src/server/scripts/Northrend/IcecrownCitadel/icecrown_citadel_teleport.cpp
+index a12e2d0..623757b 100644
+--- a/src/server/scripts/Northrend/IcecrownCitadel/icecrown_citadel_teleport.cpp
++++ b/src/server/scripts/Northrend/IcecrownCitadel/icecrown_citadel_teleport.cpp
+@@ -42,7 +42,7 @@ class icecrown_citadel_teleport : public GameObjectScript
+                 }
+                 if (instance->GetBossState(DATA_LADY_DEATHWHISPER) == DONE && go->GetEntry() != GO_SCOURGE_TRANSPORTER_RAMPART)
+                     player->ADD_GOSSIP_ITEM(GOSSIP_ICON_CHAT, "Teleport to the Rampart of Skulls.", GOSSIP_SENDER_ICC_PORT, RAMPART_OF_SKULLS_TELEPORT);
+-                if (instance->GetBossState(DATA_ICECROWN_GUNSHIP_BATTLE) == DONE && go->GetEntry() != GO_SCOURGE_TRANSPORTER_DEATHBRINGER)
++                if (instance->GetBossState(DATA_GUNSHIP_EVENT) == DONE && go->GetEntry() != GO_SCOURGE_TRANSPORTER_DEATHBRINGER)
+                     player->ADD_GOSSIP_ITEM(GOSSIP_ICON_CHAT, "Teleport to the Deathbringer's Rise.", GOSSIP_SENDER_ICC_PORT, DEATHBRINGER_S_RISE_TELEPORT);
+                 if (instance->GetData(DATA_UPPERSPIRE_TELE_ACT) == DONE && go->GetEntry() != GO_SCOURGE_TRANSPORTER_UPPERSPIRE)
+                     player->ADD_GOSSIP_ITEM(GOSSIP_ICON_CHAT, "Teleport to the Upper Spire.", GOSSIP_SENDER_ICC_PORT, UPPER_SPIRE_TELEPORT);
+diff --git a/src/server/scripts/Northrend/IcecrownCitadel/instance_icecrown_citadel.cpp b/src/server/scripts/Northrend/IcecrownCitadel/instance_icecrown_citadel.cpp
+index f223606..c9d45ff 100644
+--- a/src/server/scripts/Northrend/IcecrownCitadel/instance_icecrown_citadel.cpp
++++ b/src/server/scripts/Northrend/IcecrownCitadel/instance_icecrown_citadel.cpp
+@@ -31,11 +31,6 @@
+ 
+ enum EventIds
+ {
+-    EVENT_PLAYERS_GUNSHIP_SPAWN     = 22663,
+-    EVENT_PLAYERS_GUNSHIP_COMBAT    = 22664,
+-    EVENT_PLAYERS_GUNSHIP_SAURFANG  = 22665,
+-    EVENT_ENEMY_GUNSHIP_COMBAT      = 22860,
+-    EVENT_ENEMY_GUNSHIP_DESPAWN     = 22861,
+     EVENT_QUAKE                     = 23437,
+     EVENT_SECOND_REMORSELESS_WINTER = 23507,
+     EVENT_TELEPORT_TO_FROSTMOURNE   = 23617
+@@ -45,8 +40,7 @@ enum TimedEvents
+ {
+     EVENT_UPDATE_EXECUTION_TIME = 1,
+     EVENT_QUAKE_SHATTER         = 2,
+-    EVENT_REBUILD_PLATFORM      = 3,
+-    EVENT_RESPAWN_GUNSHIP       = 4
++    EVENT_REBUILD_PLATFORM      = 3
+ };
+ 
+ DoorData const doorData[] =
+@@ -158,9 +152,6 @@ class instance_icecrown_citadel : public InstanceMapScript
+             {
+                 if (!TeamInInstance)
+                     TeamInInstance = player->GetTeam();
+-
+-                if (GetBossState(DATA_LADY_DEATHWHISPER) == DONE && GetBossState(DATA_ICECROWN_GUNSHIP_BATTLE) != DONE)
+-                    SpawnGunship();
+             }
+ 
+             void OnCreatureCreate(Creature* creature) override
+@@ -214,10 +205,6 @@ class instance_icecrown_citadel : public InstanceMapScript
+                     case NPC_DEATHBRINGER_SAURFANG:
+                         DeathbringerSaurfangGUID = creature->GetGUID();
+                         break;
+-                    case NPC_ALLIANCE_GUNSHIP_CANNON:
+-                    case NPC_HORDE_GUNSHIP_CANNON:
+-                        creature->SetControlled(true, UNIT_STATE_ROOT);
+-                        break;
+                     case NPC_SE_HIGH_OVERLORD_SAURFANG:
+                         if (TeamInInstance == ALLIANCE)
+                             creature->UpdateEntry(NPC_SE_MURADIN_BRONZEBEARD, creature->GetCreatureData());
+@@ -342,54 +329,6 @@ class instance_icecrown_citadel : public InstanceMapScript
+                         }
+                         break;
+                     }
+-                    case NPC_HORDE_GUNSHIP_CANNON:
+-                    case NPC_ORGRIMS_HAMMER_CREW:
+-                    case NPC_SKY_REAVER_KORM_BLACKSCAR:
+-                        if (TeamInInstance == ALLIANCE)
+-                            return 0;
+-                        break;
+-                    case NPC_ALLIANCE_GUNSHIP_CANNON:
+-                    case NPC_SKYBREAKER_DECKHAND:
+-                    case NPC_HIGH_CAPTAIN_JUSTIN_BARTLETT:
+-                        if (TeamInInstance == HORDE)
+-                            return 0;
+-                        break;
+-                    case NPC_ZAFOD_BOOMBOX:
+-                        if (GameObjectTemplate const* go = sObjectMgr->GetGameObjectTemplate(GO_THE_SKYBREAKER_A))
+-                            if ((TeamInInstance == ALLIANCE && data->mapid == go->moTransport.mapID) ||
+-                                (TeamInInstance == HORDE && data->mapid != go->moTransport.mapID))
+-                                return entry;
+-                        return 0;
+-                    case NPC_IGB_MURADIN_BRONZEBEARD:
+-                        if ((TeamInInstance == ALLIANCE && data->posX > 10.0f) ||
+-                            (TeamInInstance == HORDE && data->posX < 10.0f))
+-                            return entry;
+-                        return 0;
+-                    default:
+-                        break;
+-                }
+-
+-                return entry;
+-            }
+-
+-            uint32 GetGameObjectEntry(uint32 /*guidLow*/, uint32 entry) override
+-            {
+-                switch (entry)
+-                {
+-                    case GO_GUNSHIP_ARMORY_H_10N:
+-                    case GO_GUNSHIP_ARMORY_H_25N:
+-                    case GO_GUNSHIP_ARMORY_H_10H:
+-                    case GO_GUNSHIP_ARMORY_H_25H:
+-                        if (TeamInInstance == ALLIANCE)
+-                            return 0;
+-                        break;
+-                    case GO_GUNSHIP_ARMORY_A_10N:
+-                    case GO_GUNSHIP_ARMORY_A_25N:
+-                    case GO_GUNSHIP_ARMORY_A_10H:
+-                    case GO_GUNSHIP_ARMORY_A_25H:
+-                        if (TeamInInstance == HORDE)
+-                            return 0;
+-                        break;
+                     default:
+                         break;
+                 }
+@@ -495,20 +434,6 @@ class instance_icecrown_citadel : public InstanceMapScript
+                             go->SetGoState(GO_STATE_READY);
+                         }
+                         break;
+-                    case GO_THE_SKYBREAKER_H:
+-                    case GO_ORGRIMS_HAMMER_A:
+-                        EnemyGunshipGUID = go->GetGUID();
+-                        break;
+-                    case GO_GUNSHIP_ARMORY_H_10N:
+-                    case GO_GUNSHIP_ARMORY_H_25N:
+-                    case GO_GUNSHIP_ARMORY_H_10H:
+-                    case GO_GUNSHIP_ARMORY_H_25H:
+-                    case GO_GUNSHIP_ARMORY_A_10N:
+-                    case GO_GUNSHIP_ARMORY_A_25N:
+-                    case GO_GUNSHIP_ARMORY_A_10H:
+-                    case GO_GUNSHIP_ARMORY_A_25H:
+-                        GunshipArmoryGUID = go->GetGUID();
+-                        break;
+                     case GO_SAURFANG_S_DOOR:
+                         DeathbringerSaurfangDoorGUID = go->GetGUID();
+                         AddDoor(go, true);
+@@ -674,10 +599,6 @@ class instance_icecrown_citadel : public InstanceMapScript
+                     case GO_ICE_WALL:
+                         AddDoor(go, false);
+                         break;
+-                    case GO_THE_SKYBREAKER_A:
+-                    case GO_ORGRIMS_HAMMER_H:
+-                        GunshipGUID.Clear();
+-                        break;
+                     default:
+                         break;
+                 }
+@@ -714,10 +635,6 @@ class instance_icecrown_citadel : public InstanceMapScript
+             {
+                 switch (type)
+                 {
+-                    case DATA_ICECROWN_GUNSHIP_BATTLE:
+-                        return GunshipGUID;
+-                    case DATA_ENEMY_GUNSHIP:
+-                        return EnemyGunshipGUID;
+                     case DATA_DEATHBRINGER_SAURFANG:
+                         return DeathbringerSaurfangGUID;
+                     case DATA_SAURFANG_EVENT_NPC:
+@@ -798,6 +715,7 @@ class instance_icecrown_citadel : public InstanceMapScript
+                     }
+                     case DATA_LADY_DEATHWHISPER:
+                     {
++                        SetBossState(DATA_GUNSHIP_EVENT, state);
+                         if (state == DONE)
+                         {
+                             if (GameObject* teleporter = instance->GetGameObject(TeleporterRampartsGUID))
+@@ -808,23 +726,9 @@ class instance_icecrown_citadel : public InstanceMapScript
+                                 elevator->SetUInt32Value(GAMEOBJECT_LEVEL, 0);
+                                 elevator->SetGoState(GO_STATE_READY);
+                             }
+-
+-                            SpawnGunship();
+                         }
+                         break;
+                     }
+-                    case DATA_ICECROWN_GUNSHIP_BATTLE:
+-                        if (state == DONE)
+-                        {
+-                            if (GameObject* teleporter = instance->GetGameObject(TeleporterDeathBringerGUID))
+-                                SetTeleporterState(teleporter, true);
+-
+-                            if (GameObject* loot = instance->GetGameObject(GunshipArmoryGUID))
+-                                loot->RemoveFlag(GAMEOBJECT_FLAGS, GO_FLAG_LOCKED | GO_FLAG_NOT_SELECTABLE | GO_FLAG_NODESPAWN);
+-                        }
+-                        else if (state == FAIL)
+-                            Events.ScheduleEvent(EVENT_RESPAWN_GUNSHIP, 30000);
+-                        break;
+                     case DATA_DEATHBRINGER_SAURFANG:
+                         switch (state)
+                         {
+@@ -993,17 +897,6 @@ class instance_icecrown_citadel : public InstanceMapScript
+                  return true;
+             }
+ 
+-            void SpawnGunship()
+-            {
+-                if (!GunshipGUID)
+-                {
+-                    SetBossState(DATA_ICECROWN_GUNSHIP_BATTLE, NOT_STARTED);
+-                    uint32 gunshipEntry = TeamInInstance == HORDE ? GO_ORGRIMS_HAMMER_H : GO_THE_SKYBREAKER_A;
+-                    if (Transport* gunship = sTransportMgr->CreateTransport(gunshipEntry, 0, instance))
+-                        GunshipGUID = gunship->GetGUID();
+-                }
+-            }
+-
+             void SetData(uint32 type, uint32 data) override
+             {
+                 switch (type)
+@@ -1233,10 +1126,10 @@ class instance_icecrown_citadel : public InstanceMapScript
+                             return false;
+                         // no break
+                     case DATA_DEATHBRINGER_SAURFANG:
+-                        if (GetBossState(DATA_ICECROWN_GUNSHIP_BATTLE) != DONE)
++                        if (GetBossState(DATA_GUNSHIP_EVENT) != DONE)
+                             return false;
+                         // no break
+-                    case DATA_ICECROWN_GUNSHIP_BATTLE:
++                    case DATA_GUNSHIP_EVENT:
+                         if (GetBossState(DATA_LADY_DEATHWHISPER) != DONE)
+                             return false;
+                         // no break
+@@ -1304,7 +1197,7 @@ class instance_icecrown_citadel : public InstanceMapScript
+ 
+             void Update(uint32 diff) override
+             {
+-                if (BloodQuickeningState != IN_PROGRESS && GetBossState(DATA_THE_LICH_KING) != IN_PROGRESS && GetBossState(DATA_ICECROWN_GUNSHIP_BATTLE) != FAIL)
++                if (BloodQuickeningState != IN_PROGRESS && GetBossState(DATA_THE_LICH_KING) != IN_PROGRESS)
+                     return;
+ 
+                 Events.Update(diff);
+@@ -1354,42 +1247,16 @@ class instance_icecrown_citadel : public InstanceMapScript
+                             if (GameObject* wind = instance->GetGameObject(FrozenThroneWindGUID))
+                                 wind->SetGoState(GO_STATE_ACTIVE);
+                             break;
+-                        case EVENT_RESPAWN_GUNSHIP:
+-                            SpawnGunship();
+-                            break;
+                         default:
+                             break;
+                     }
+                 }
+             }
+ 
+-            void ProcessEvent(WorldObject* source, uint32 eventId) override
++            void ProcessEvent(WorldObject* /*source*/, uint32 eventId) override
+             {
+                 switch (eventId)
+                 {
+-                    case EVENT_ENEMY_GUNSHIP_DESPAWN:
+-                        if (GetBossState(DATA_ICECROWN_GUNSHIP_BATTLE) == DONE)
+-                            source->AddObjectToRemoveList();
+-                        break;
+-                    case EVENT_ENEMY_GUNSHIP_COMBAT:
+-                        if (Creature* captain = source->FindNearestCreature(TeamInInstance == HORDE ? NPC_IGB_HIGH_OVERLORD_SAURFANG : NPC_IGB_MURADIN_BRONZEBEARD, 100.0f))
+-                            captain->AI()->DoAction(ACTION_ENEMY_GUNSHIP_TALK);
+-                        // no break;
+-                    case EVENT_PLAYERS_GUNSHIP_SPAWN:
+-                    case EVENT_PLAYERS_GUNSHIP_COMBAT:
+-                        if (GameObject* go = source->ToGameObject())
+-                            if (Transport* transport = go->ToTransport())
+-                                transport->EnableMovement(false);
+-                        break;
+-                    case EVENT_PLAYERS_GUNSHIP_SAURFANG:
+-                    {
+-                        if (Creature* captain = source->FindNearestCreature(TeamInInstance == HORDE ? NPC_IGB_HIGH_OVERLORD_SAURFANG : NPC_IGB_MURADIN_BRONZEBEARD, 100.0f))
+-                            captain->AI()->DoAction(ACTION_EXIT_SHIP);
+-                        if (GameObject* go = source->ToGameObject())
+-                            if (Transport* transport = go->ToTransport())
+-                                transport->EnableMovement(false);
+-                        break;
+-                    }
+                     case EVENT_QUAKE:
+                         if (GameObject* warning = instance->GetGameObject(FrozenThroneWarningGUID))
+                             warning->SetGoState(GO_STATE_ACTIVE);
+@@ -1428,9 +1295,6 @@ class instance_icecrown_citadel : public InstanceMapScript
+         protected:
+             EventMap Events;
+             ObjectGuid LadyDeathwisperElevatorGUID;
+-            ObjectGuid GunshipGUID;
+-            ObjectGuid EnemyGunshipGUID;
+-            ObjectGuid GunshipArmoryGUID;
+             ObjectGuid DeathbringerSaurfangGUID;
+             ObjectGuid DeathbringerSaurfangDoorGUID;
+             ObjectGuid DeathbringerSaurfangEventGUID;   // Muradin Bronzebeard or High Overlord Saurfang

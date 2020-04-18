@@ -1,0 +1,199 @@
+From 3f54f2fdb2c1b3424a714a86ec41ba874af073f7 Mon Sep 17 00:00:00 2001
+From: LordPsyan <realmsofwarcraft@gmail.com>
+Date: Wed, 16 Jul 2014 22:42:49 -0400
+Subject: [PATCH] CongratsOnLevel
+
+---
+ HowTo-Congrats-On-Level.txt                     |   38 ++++++++++
+ src/server/game/Scripting/ScriptLoader.cpp      |    6 +-
+ src/server/scripts/Custom/CMakeLists.txt        |    4 +-
+ src/server/scripts/Custom/Congrats_on_Level.cpp |   90 +++++++++++++++++++++++
+ 4 files changed, 134 insertions(+), 4 deletions(-)
+ create mode 100644 HowTo-Congrats-On-Level.txt
+ create mode 100644 src/server/scripts/Custom/Congrats_on_Level.cpp
+
+diff --git a/HowTo-Congrats-On-Level.txt b/HowTo-Congrats-On-Level.txt
+new file mode 100644
+index 0000000..4613d18
+--- /dev/null
++++ b/HowTo-Congrats-On-Level.txt
+@@ -0,0 +1,38 @@
++This small script allows for a reward to automatically go into the inventory of any player that makes it to a specific level.
++
++Make sure to modify this script before using. You must hard code in the money amounts, and item entry numbers, plus spell numbers.
++
++An example:
++
++This is the part of the cpp file you must edit. I will explain each part.
++
++            case 10:
++        money = 100;
++        item = ITEMID;
++        item2 = ITEMID2;
++        spell = SPELLID;
++        break;
++
++Here is the breakdown:
++
++            case 10: (10 = Level 10)
++        money = 100; (100 = 100 gold)
++        item = ITEMID; (Change ITEMID to the entry number of the item you want offered at this level)
++        item2 = ITEMID2; (Change ITEMID2 to the entry number of second item)
++        spell = SPELLID; (Change SPELLID to the spell id number)
++        break;
++
++So if you wanted to offer 100 gold, a pet cat (pet carrier, black tabby) and a pet cockroach, plus buff the player with Power Word: Fortitude, it would look like this:
++
++
++            case 10:
++        money = 100;
++        item = 8491;
++        item2 = 10393;
++        spell = 48161;
++        break;
++
++You must do this for each level you want to have give rewards. At this time, since items are automatically added, the player loses the reward(s) if
++their bags are full.
++
++DB Table version coming soon.
+\ No newline at end of file
+diff --git a/src/server/game/Scripting/ScriptLoader.cpp b/src/server/game/Scripting/ScriptLoader.cpp
+index ce01273..c2ed1a8 100644
+--- a/src/server/game/Scripting/ScriptLoader.cpp
++++ b/src/server/game/Scripting/ScriptLoader.cpp
+@@ -1438,13 +1438,15 @@ void AddBattlegroundScripts()
+ 
+ #ifdef SCRIPTS
+ /* This is where custom scripts' loading functions should be declared. */
+-
++// Congrats on Level
++void AddSC_custom_CongratsOnLevel();
+ #endif
+ 
+ void AddCustomScripts()
+ {
+ #ifdef SCRIPTS
+     /* This is where custom scripts should be added. */
+-
++    // Congrats on Level
++    AddSC_custom_CongratsOnLevel();
+ #endif
+ }
+diff --git a/src/server/scripts/Custom/CMakeLists.txt b/src/server/scripts/Custom/CMakeLists.txt
+index 80ebe36..20c2bc9 100644
+--- a/src/server/scripts/Custom/CMakeLists.txt
++++ b/src/server/scripts/Custom/CMakeLists.txt
+@@ -8,11 +8,11 @@
+ # WITHOUT ANY WARRANTY, to the extent permitted by law; without even the
+ # implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ 
+-# file(GLOB_RECURSE sources_Custom Custom/*.cpp Custom/*.h)
++file(GLOB_RECURSE sources_Custom Custom/*.cpp Custom/*.h)
+ 
+ set(scripts_STAT_SRCS
+   ${scripts_STAT_SRCS}
+-#  ${sources_Custom}
++  ${sources_Custom}
+ )
+ 
+ message("  -> Prepared: Custom")
+diff --git a/src/server/scripts/Custom/Congrats_on_Level.cpp b/src/server/scripts/Custom/Congrats_on_Level.cpp
+new file mode 100644
+index 0000000..7314a44
+--- /dev/null
++++ b/src/server/scripts/Custom/Congrats_on_Level.cpp
+@@ -0,0 +1,90 @@
++/*
++Idea and base script by Vextah.
++Help and fixes on original script by: Core surgeon & (cant remember other who initially helped but kudos)
++Modified by LordPsyan
++*/
++
++#include "ScriptMgr.h"
++
++class custom_CongratsOnLevel : public PlayerScript
++{
++public:
++    custom_CongratsOnLevel() : PlayerScript("custom_CongratsOnLevel") { }
++
++    void OnLevelChanged(Player* player, uint8 newLevel)
++    {
++        uint32 money, item, item2, spell;
++
++        switch(++newLevel)
++        {
++            case 10:
++        money = 100;
++        item = ITEMID;
++        item2 = ITEMID2;
++        spell = SPELLID;
++        break;
++            case 20:
++        money = 150;
++        item = ITEMID;
++        item2 = ITEMID2;
++        spell = SPELLID;
++        break;
++            case 30:
++        money = 200;
++        item = ITEMID;
++        item2 = ITEMID2;
++        spell = SPELLID;
++        break;
++            case 40:
++        money = 250;
++        item = ITEMID;
++        item2 = ITEMID2;
++        spell = SPELLID;
++        break;
++            case 50:
++        money = 350;
++        item = ITEMID;
++        item2 = ITEMID2;
++        spell = SPELLID;
++        break;
++            case 60:
++        money = 450;
++        item = ITEMID;
++        item2 = ITEMID2;
++        spell = SPELLID;
++        break;
++            case 70:
++        money = 500;
++        item = ITEMID;
++        item2 = ITEMID2;
++        spell = SPELLID;
++        break;
++            case 80:
++        money = 1000;
++        item = ITEMID;
++        item2 = ITEMID2;
++        spell = SPELLID;
++        break;
++            default:
++        return;
++        }
++
++        std::ostringstream ss;
++        ss << "|cffFF0000[Faction Gaming]|r Congrats to " << player->GetName() << " on reaching level " << (uint32)newLevel;
++        sWorld->SendServerMessage(SERVER_MSG_STRING, ss.str().c_str());
++
++        std::ostringstream ss2;
++        ss2 << "For your hard work and dedication you have been awarded " << money << " gold and a special item!";
++        player->GetSession()->SendNotification(ss2.str().c_str());
++
++        player->ModifyMoney(money*GOLD);
++    player->AddItem(item, 1);
++        player->AddItem(item2, 1);
++    player->LearnSpell(spell, false);
++    }
++};
++
++void AddSC_custom_CongratsOnLevel()
++{
++    new custom_CongratsOnLevel();
++}
+\ No newline at end of file
+-- 
+1.7.10.4
+

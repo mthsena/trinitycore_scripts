@@ -1,0 +1,94 @@
+From cee5687e8e21bed32c1c9b78d165d817c45230f3 Mon Sep 17 00:00:00 2001
+From: LordPsyan <realmsofwarcraft@gmail.com>
+Date: Sat, 9 Jan 2016 10:54:44 -0600
+Subject: [PATCH] 2016_01_09-Arena_Anti_Draw
+
+---
+ src/server/game/Scripting/ScriptLoader.cpp    |  4 +--
+ src/server/scripts/Custom/Arena_Anti_Draw.cpp | 51 +++++++++++++++++++++++++++
+ 2 files changed, 53 insertions(+), 2 deletions(-)
+ create mode 100644 src/server/scripts/Custom/Arena_Anti_Draw.cpp
+
+diff --git a/src/server/game/Scripting/ScriptLoader.cpp b/src/server/game/Scripting/ScriptLoader.cpp
+index 3640ce9..4138c7c 100644
+--- a/src/server/game/Scripting/ScriptLoader.cpp
++++ b/src/server/game/Scripting/ScriptLoader.cpp
+@@ -1507,7 +1507,7 @@ void AddBattlegroundScripts()
+ // start94
+ // start95
+ // start96
+-// start97
++void AddSC_Arena_AntiDraw();
+ // start98
+ // start99
+ // start100
+@@ -1633,7 +1633,7 @@ void AddCustomScripts()
+ // end94
+ // end95
+ // end96
+-// end97
++    AddSC_Arena_AntiDraw();
+ // end98
+ // end99
+ // end100
+diff --git a/src/server/scripts/Custom/Arena_Anti_Draw.cpp b/src/server/scripts/Custom/Arena_Anti_Draw.cpp
+new file mode 100644
+index 0000000..ea650f7
+--- /dev/null
++++ b/src/server/scripts/Custom/Arena_Anti_Draw.cpp
+@@ -0,0 +1,51 @@
++#include "Pet.h"
++
++const uint32 SPELL_DEMENTIA = 41406;
++
++class AntiDrawSystem : public PlayerScript
++{
++public:
++    AntiDrawSystem() : PlayerScript("AntiDrawSystem") {}
++
++    void OnUpdateZone(Player* player, uint32 newZone, uint32 newArea)
++	{
++		Pet* pet = player->GetPet();
++
++        // Remove Dementia on updating zone for player
++        if (player->HasAura(SPELL_DEMENTIA))
++            player->RemoveAura(SPELL_DEMENTIA);
++
++		// Remove Dementia on upddating zone for pet
++		if (pet)
++		{
++			if (pet->HasAura(SPELL_DEMENTIA))
++			{
++				pet->RemoveAura(SPELL_DEMENTIA);
++			}
++		}
++    }
++
++    void OnLogin(Player* player, bool /* OnLogin */)
++    {
++		Pet* pet = player->GetPet();
++
++        // Remove Dementia on player login
++        if (player->HasAura(SPELL_DEMENTIA))
++            player->RemoveAura(SPELL_DEMENTIA);
++
++		// Remove Dementia on Pet Login
++		if (pet)
++		{
++			if (pet->HasAura(SPELL_DEMENTIA))
++			{
++				pet->RemoveAura(SPELL_DEMENTIA);
++			}
++		}
++    }
++
++};
++
++void AddSC_Arena_AntiDraw()
++{
++    new AntiDrawSystem();
++}
+\ No newline at end of file
+-- 
+2.1.4
+

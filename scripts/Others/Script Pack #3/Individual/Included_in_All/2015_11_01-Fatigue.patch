@@ -1,0 +1,66 @@
+From 5326ce428cff23cdec7ca99798addc53d76903ff Mon Sep 17 00:00:00 2001
+From: LordPsyan <realmsofwarcraft@gmail.com>
+Date: Mon, 28 Sep 2015 07:37:13 -0500
+Subject: [PATCH] 2015_09_28-Fatigue
+
+---
+ src/server/game/Entities/Player/Player.cpp   |    8 +++++++-
+ src/server/worldserver/worldserver.conf.dist |    7 +++++++
+ 2 files changed, 14 insertions(+), 1 deletion(-)
+
+diff --git a/src/server/game/Entities/Player/Player.cpp b/src/server/game/Entities/Player/Player.cpp
+index 2fe5084..bdca5c1 100644
+--- a/src/server/game/Entities/Player/Player.cpp
++++ b/src/server/game/Entities/Player/Player.cpp
+@@ -1369,8 +1369,11 @@ int32 Player::getMaxTimer(MirrorTimerType timer)
+ {
+     switch (timer)
+     {
++    if(sConfigMgr->GetBoolDefault("fatigue.enabled", true)) // If "fatigue.enabled" is enabled
++        {
+         case FATIGUE_TIMER:
+             return MINUTE * IN_MILLISECONDS;
++        }
+         case BREATH_TIMER:
+         {
+             if (!IsAlive() || HasAuraType(SPELL_AURA_WATER_BREATHING) || GetSession()->GetSecurity() >= AccountTypes(sWorld->getIntConfig(CONFIG_DISABLE_BREATHING)))
+@@ -1453,6 +1456,9 @@ void Player::HandleDrowning(uint32 time_diff)
+     }
+ 
+     // In dark water
++if(sConfigMgr->GetBoolDefault("fatigue.enabled", true)) // If "fatigue.enabled" is enabled
++{
++
+     if (m_MirrorTimerFlags & UNDERWARER_INDARKWATER)
+     {
+         // Fatigue timer not activated - activate it
+@@ -1489,7 +1495,7 @@ void Player::HandleDrowning(uint32 time_diff)
+         else if (m_MirrorTimerFlagsLast & UNDERWARER_INDARKWATER)
+             SendMirrorTimer(FATIGUE_TIMER, DarkWaterTime, m_MirrorTimer[FATIGUE_TIMER], 10);
+     }
+-
++}
+     if (m_MirrorTimerFlags & (UNDERWATER_INLAVA /*| UNDERWATER_INSLIME*/) && !(_lastLiquid && _lastLiquid->SpellId))
+     {
+         // Breath timer not activated - activate it
+diff --git a/src/server/worldserver/worldserver.conf.dist b/src/server/worldserver/worldserver.conf.dist
+index 4fccf90..c0e6154 100644
+--- a/src/server/worldserver/worldserver.conf.dist
++++ b/src/server/worldserver/worldserver.conf.dist
+@@ -812,6 +812,13 @@ RecruitAFriend.MaxDifference = 4
+ DisableWaterBreath = 4
+ 
+ #
++#    Enable or Disable "Fatigue" timer
++#           default = 1 (enabled)
++#                   = 0 (disabled)
++
++fatigue.enabled = 1
++
++#
+ #    AllFlightPaths
+ #        Description: Character knows all flight paths (of both factions) after creation.
+ #        Default:     0 - (Disabled)
+-- 
+1.7.10.4
+

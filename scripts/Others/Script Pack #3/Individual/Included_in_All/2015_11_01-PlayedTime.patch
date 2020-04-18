@@ -1,0 +1,90 @@
+From ee72409b4ee952a4fa372fa0ccaca9c8b571afd8 Mon Sep 17 00:00:00 2001
+From: LordPsyan <realmsofwarcraft@gmail.com>
+Date: Sun, 1 Nov 2015 10:50:04 -0600
+Subject: [PATCH] 2015_11_01-PlayedTime
+
+---
+ src/server/game/Entities/Player/Player.cpp   | 21 +++++++++++++++++++++
+ src/server/game/Entities/Player/Player.h     |  6 ++++++
+ src/server/worldserver/worldserver.conf.dist |  9 +++++++++
+ 3 files changed, 36 insertions(+)
+
+diff --git a/src/server/game/Entities/Player/Player.cpp b/src/server/game/Entities/Player/Player.cpp
+index abe098b..e6b3d8c 100644
+--- a/src/server/game/Entities/Player/Player.cpp
++++ b/src/server/game/Entities/Player/Player.cpp
+@@ -784,6 +784,12 @@ Player::Player(WorldSession* session): Unit(true)
+         m_bgBattlegroundQueueID[j].invitedToInstance = 0;
+     }
+ 
++    // PlayedTimeReward
++    ptr_Interval = sConfigMgr->GetIntDefault("PlayedTimeReward.Interval", 0);
++    ptr_Money = sConfigMgr->GetIntDefault("PlayedTimeReward.Money", 0);
++    ptr_Honor = sConfigMgr->GetIntDefault("PlayedTimeReward.Honor", 0);
++    ptr_Arena = sConfigMgr->GetIntDefault("PlayedTimeReward.Arena", 0);
++
+     m_logintime = time(NULL);
+     m_Last_tick = m_logintime;
+     m_Played_time[PLAYED_TIME_TOTAL] = 0;
+@@ -1650,6 +1656,21 @@ void Player::Update(uint32 p_time)
+         LoginDatabase.Execute(stmt);
+     }
+ 
++    // PlayedTimeReward
++    if (ptr_Interval > 0)
++    {
++        if (ptr_Interval <= p_time)
++        {
++            GetSession()->SendAreaTriggerMessage("Bonus for played time.");
++            ModifyMoney(ptr_Money);
++            ModifyHonorPoints(ptr_Honor);
++            ModifyArenaPoints(ptr_Arena);
++            ptr_Interval = sConfigMgr->GetIntDefault("PlayedTimeReward.Interval", 0);
++        }
++        else
++            ptr_Interval -= p_time;
++    }
++
+     if (!m_timedquests.empty())
+     {
+         QuestSet::iterator iter = m_timedquests.begin();
+diff --git a/src/server/game/Entities/Player/Player.h b/src/server/game/Entities/Player/Player.h
+index 166b5c4..e7117e9 100644
+--- a/src/server/game/Entities/Player/Player.h
++++ b/src/server/game/Entities/Player/Player.h
+@@ -1182,6 +1182,12 @@ class Player : public Unit, public GridObject<Player>
+         void SetCommandStatusOn(uint32 command) { _activeCheats |= command; }
+         void SetCommandStatusOff(uint32 command) { _activeCheats &= ~command; }
+ 
++        // PlayedTimeReward
++        uint32 ptr_Interval;
++        uint32 ptr_Money;
++        uint32 ptr_Honor;
++        uint32 ptr_Arena;
++
+         // Played Time Stuff
+         time_t m_logintime;
+         time_t m_Last_tick;
+diff --git a/src/server/worldserver/worldserver.conf.dist b/src/server/worldserver/worldserver.conf.dist
+index 8a7da8c..03ac059 100644
+--- a/src/server/worldserver/worldserver.conf.dist
++++ b/src/server/worldserver/worldserver.conf.dist
+@@ -3430,6 +3430,15 @@ PacketSpoof.BanDuration = 86400
+ 
+ #
+ ###################################################################################################
++#
++
++PlayedTimeReward.Interval = 0
++PlayedTimeReward.Money    = 0
++PlayedTimeReward.Honor    = 0
++PlayedTimeReward.Arena    = 0
++
++#
++###################################################################################################
+ 
+ #
+ # Prepatch by LordPsyan.
+-- 
+2.1.4
+

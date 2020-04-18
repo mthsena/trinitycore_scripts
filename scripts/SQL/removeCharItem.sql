@@ -1,0 +1,3 @@
+SET @PLAYER_GUID = 1;
+SET @ITEM_ENTRY = 6948;
+DELETE FROM item_instance WHERE owner_guid = @PLAYER_GUID AND itemEntry = @ITEM_ENTRY;

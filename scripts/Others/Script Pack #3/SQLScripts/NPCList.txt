@@ -1,0 +1,15 @@
+NPC  List for SQL Scripts
+
+Gem Vendor Script:
+
+Blue Gem Vendor - #500147
+Green Gem Vendor - #500148
+Purple Gem Vendor - #500149
+Red Gem Vendor - #500150
+Yellow Gem Vendor - #500151
+Orange Gem Vendor - #500152
+Meta Gem Vendor - #500153
+Prismatic Gem Vendor - #500154
+
+Teleporter:
+Telport NPC - #190000

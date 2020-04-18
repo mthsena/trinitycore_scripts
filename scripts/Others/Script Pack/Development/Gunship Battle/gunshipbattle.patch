@@ -1,0 +1,1277 @@
+
+ src/server/game/Entities/Object/Object.h           |   4 +-
+ src/server/game/Entities/Player/Player.cpp         |   2 +-
+ src/server/game/Entities/Transport/Transport.cpp   | 185 ++++++++++++-
+ src/server/game/Entities/Transport/Transport.h     |   7 +-
+ src/server/game/Instances/InstanceScript.cpp       |  17 ++
+ src/server/game/Instances/InstanceScript.h         |   3 +
+ src/server/game/Maps/Map.cpp                       |  22 +-
+ src/server/game/Maps/MapManager.h                  |   7 +
+ src/server/game/Scripting/ScriptLoader.cpp         |   2 +
+ src/server/scripts/Northrend/CMakeLists.txt        |   1 +
+ .../Northrend/IcecrownCitadel/icecrown_citadel.cpp | 233 ++++++++++++++++
+ .../Northrend/IcecrownCitadel/icecrown_citadel.h   | 134 +++++++--
+ .../IcecrownCitadel/instance_icecrown_citadel.cpp  | 306 ++++++++++++++++++++-
+ 15 files changed, 885 insertions(+), 40 deletions(-)
+
+diff --git a/src/server/game/Entities/Object/Object.h b/src/server/game/Entities/Object/Object.h
+index 0bb4214..ee2747f 100755
+--- a/src/server/game/Entities/Object/Object.h
++++ b/src/server/game/Entities/Object/Object.h
+@@ -800,8 +800,8 @@ class WorldObject : public Object, public WorldLocation
+         Creature*   FindNearestCreature(uint32 entry, float range, bool alive = true) const;
+         GameObject* FindNearestGameObject(uint32 entry, float range) const;
+         GameObject* FindNearestGameObjectOfType(GameobjectTypes type, float range) const;
+-
+-        void GetGameObjectListWithEntryInGrid(std::list<GameObject*>& lList, uint32 uiEntry, float fMaxSearchRange) const;
++		
++		void GetGameObjectListWithEntryInGrid(std::list<GameObject*>& lList, uint32 uiEntry, float fMaxSearchRange) const;
+         void GetCreatureListWithEntryInGrid(std::list<Creature*>& lList, uint32 uiEntry, float fMaxSearchRange) const;
+ 
+         void DestroyForNearbyPlayers();
+diff --git a/src/server/game/Entities/Player/Player.cpp b/src/server/game/Entities/Player/Player.cpp
+index 46110a2..e7a438c 100755
+--- a/src/server/game/Entities/Player/Player.cpp
++++ b/src/server/game/Entities/Player/Player.cpp
+@@ -2156,7 +2156,7 @@ bool Player::TeleportTo(uint32 mapid, float x, float y, float z, float orientati
+     if (duel && GetMapId() != mapid && GetMap()->GetGameObject(GetUInt64Value(PLAYER_DUEL_ARBITER)))
+         DuelComplete(DUEL_FLED);
+ 
+-    if (GetMapId() == mapid)
++    if ((GetMapId() == mapid && !m_transport) || (GetTransport() && GetMapId() == 628) || (GetTransport() && GetMapId() == 631))
+     {
+         //lets reset far teleport flag if it wasn't reset during chained teleports
+         SetSemaphoreTeleportFar(false);
+diff --git a/src/server/game/Entities/Transport/Transport.cpp b/src/server/game/Entities/Transport/Transport.cpp
+index f52d005..8ee2f85 100755
+--- a/src/server/game/Entities/Transport/Transport.cpp
++++ b/src/server/game/Entities/Transport/Transport.cpp
+@@ -26,6 +26,123 @@
+ #include "DBCStores.h"
+ #include "World.h"
+ #include "GameObjectAI.h"
++#include "Vehicle.h"
++
++Transport* MapManager::LoadTransportInMap(Map* instance, uint32 goEntry, uint32 period)
++{
++    const GameObjectTemplate* goInfo = sObjectMgr->GetGameObjectTemplate(goEntry);
++
++    if (!goInfo)
++    {
++        return NULL;
++    }
++
++    if (goInfo->type != GAMEOBJECT_TYPE_MO_TRANSPORT)
++    {
++        return NULL;
++    }
++
++    Transport* t = new Transport(period, goInfo->ScriptId);
++    std::set<uint32> mapsUsed;
++    if (!t->GenerateWaypoints(goInfo->moTransport.taxiPathId, mapsUsed))
++    {
++        delete t;
++        return NULL;
++    }
++    uint32 transportLowGuid = sObjectMgr->GenerateLowGuid(HIGHGUID_MO_TRANSPORT);
++
++    if (!t->Create(transportLowGuid, goEntry, t->m_WayPoints[0].mapid, t->m_WayPoints[0].x, t->m_WayPoints[0].y, t->m_WayPoints[0].z-10, 0.0f, 0, 0))
++    {
++        delete t;
++        return NULL;
++    }
++
++    m_Transports.insert(t);
++    m_TransportsByInstanceIdMap[instance->GetInstanceId()].insert(t);
++    t->SetMap(instance);
++    t->AddToWorld();
++
++    return t;
++}
++
++void MapManager::UnLoadTransportFromMap(Transport* t)
++{
++    Map* map = t->GetMap();
++
++    for (Transport::CreatureSet::iterator itr = t->m_NPCPassengerSet.begin(); itr != t->m_NPCPassengerSet.end();)
++    {
++        if (Creature* npc = *itr)
++        {
++            npc->SetTransport(NULL);
++            npc->setActive(false);
++            npc->RemoveFromWorld();
++        }
++        ++itr;
++    }
++
++    UpdateData transData;
++    t->BuildOutOfRangeUpdateBlock(&transData);
++    WorldPacket out_packet;
++    transData.BuildPacket(&out_packet);
++
++    for (Map::PlayerList::const_iterator itr = map->GetPlayers().begin(); itr != map->GetPlayers().end(); ++itr)
++        if (t != itr->getSource()->GetTransport())
++            itr->getSource()->SendDirectMessage(&out_packet);
++
++    t->m_NPCPassengerSet.clear();         
++    m_TransportsByInstanceIdMap[t->GetInstanceId()].erase(t);
++    m_Transports.erase(t);
++    t->m_WayPoints.clear();
++    t->RemoveFromWorld();
++
++}
++
++void MapManager::LoadTransportForPlayers(Player* player)
++{
++    MapManager::TransportMap& tmap = sMapMgr->m_TransportsByInstanceIdMap;
++    
++    UpdateData transData;
++
++    MapManager::TransportSet& tset = tmap[player->GetInstanceId()];
++
++    for (MapManager::TransportSet::const_iterator i = tset.begin(); i != tset.end(); ++i)
++    {
++        (*i)->BuildCreateUpdateBlockForPlayer(&transData, player);
++    }
++
++    WorldPacket packet;
++    transData.BuildPacket(&packet);
++    player->SendDirectMessage(&packet);
++}
++
++void MapManager::UnLoadTransportForPlayers(Player* player)
++{
++    MapManager::TransportMap& tmap = sMapMgr->m_TransportsByInstanceIdMap;
++    
++    UpdateData transData;
++
++    MapManager::TransportSet& tset = tmap[player->GetInstanceId()];
++
++    for (MapManager::TransportSet::const_iterator i = tset.begin(); i != tset.end(); ++i)
++    {
++        for (Transport::CreatureSet::iterator itr = (*i)->m_NPCPassengerSet.begin(); itr != (*i)->m_NPCPassengerSet.end();)
++        {
++            if (Creature* npc = *itr)
++            {
++                npc->SetTransport(NULL);
++                npc->setActive(false);
++                npc->RemoveFromWorld();
++            }
++            ++itr;
++        }
++
++        (*i)->BuildOutOfRangeUpdateBlock(&transData);
++    }
++
++    WorldPacket packet;
++    transData.BuildPacket(&packet);
++    player->SendDirectMessage(&packet);
++}
+ 
+ void MapManager::LoadTransports()
+ {
+@@ -84,8 +201,8 @@ void MapManager::LoadTransports()
+         uint32 mapid = t->m_WayPoints[0].mapid;
+         float o = 1.0f;
+ 
+-         // creates the Gameobject
+-        if (!t->Create(lowguid, entry, mapid, x, y, z, o, 255, 0))
++         // creates the Gameobject -- Gunship
++        if (!t->Create(lowguid, entry, mapid, x, y, z, o, 100, 0))
+         {
+             delete t;
+             continue;
+@@ -213,7 +330,8 @@ bool Transport::Create(uint32 guidlow, uint32 entry, uint32 mapid, float x, floa
+     SetObjectScale(goinfo->size);
+ 
+     SetUInt32Value(GAMEOBJECT_FACTION, goinfo->faction);
+-    SetUInt32Value(GAMEOBJECT_FLAGS, goinfo->flags);
++    //SetUInt32Value(GAMEOBJECT_FLAGS, goinfo->flags); -- gunship
++	SetUInt32Value(GAMEOBJECT_FLAGS, MAKE_PAIR32(0x28, 0x64));
+     SetUInt32Value(GAMEOBJECT_LEVEL, m_period);
+     SetEntry(goinfo->entry);
+ 
+@@ -553,6 +671,8 @@ void Transport::Update(uint32 p_diff)
+         {
+             Relocate(m_curr->second.x, m_curr->second.y, m_curr->second.z, GetAngle(m_next->second.x, m_next->second.y) + float(M_PI));
+             UpdateNPCPositions(); // COME BACK MARKER
++            // This forces the server to update positions in transportation for players -- gunship
++            UpdatePlayerPositions();
+         }
+ 
+         sScriptMgr->OnRelocate(this, m_curr->first, m_curr->second.mapid, m_curr->second.x, m_curr->second.y, m_curr->second.z);
+@@ -672,10 +792,49 @@ uint32 Transport::AddNPCPassenger(uint32 tguid, uint32 entry, float x, float y,
+     else
+         currenttguid = std::max(tguid, currenttguid);
+ 
++    creature->setActive(true);
+     creature->SetGUIDTransport(tguid);
+     sScriptMgr->OnAddCreaturePassenger(this, creature);
+     return tguid;
+ }
++// gunship data
++Creature* Transport::AddNPCPassengerInInstance(uint32 entry, float x, float y, float z, float o, uint32 anim)
++{
++    Map* map = GetMap();
++    Creature* creature = new Creature;
++
++    if (!creature->Create(sObjectMgr->GenerateLowGuid(HIGHGUID_UNIT), map, GetPhaseMask(), entry, 0, GetGOInfo()->faction, 0, 0, 0, 0))
++    {
++        delete creature;
++        return 0;
++    }
++
++    creature->SetTransport(this);
++    creature->AddUnitMovementFlag(MOVEMENTFLAG_ONTRANSPORT);
++    creature->m_movementInfo.guid = GetGUID();
++    creature->m_movementInfo.t_pos.Relocate(x, y, z, o);
++
++    creature->Relocate(
++        GetPositionX() + (x * cos(GetOrientation()) + y * sin(GetOrientation() + float(M_PI))),
++        GetPositionY() + (y * cos(GetOrientation()) + x * sin(GetOrientation())),
++        z + GetPositionZ(),
++        o + GetOrientation());
++
++    creature->SetHomePosition(creature->GetPositionX(), creature->GetPositionY(), creature->GetPositionZ(), creature->GetOrientation());
++
++    if (!creature->IsPositionValid())
++    {
++        delete creature;
++        return 0;
++    }
++
++    map->AddToMap(creature);
++    m_NPCPassengerSet.insert(creature);
++
++    creature->setActive(true);
++    sScriptMgr->OnAddCreaturePassenger(this, creature);
++    return creature;
++}
+ 
+ void Transport::UpdatePosition(MovementInfo* mi)
+ {
+@@ -686,6 +845,7 @@ void Transport::UpdatePosition(MovementInfo* mi)
+ 
+     Relocate(transport_x, transport_y, transport_z, transport_o);
+     UpdateNPCPositions();
++    UpdatePlayerPositions();
+ }
+ 
+ void Transport::UpdateNPCPositions()
+@@ -703,6 +863,25 @@ void Transport::UpdateNPCPositions()
+         npc->SetHomePosition(x, y, z, o);
+     }
+ }
++// gunship Data
++void Transport::UpdatePlayerPositions()
++{
++    for (PlayerSet::iterator itr = m_passengers.begin(); itr != m_passengers.end(); ++itr)
++    {
++        Player* plr = *itr;
++
++        float x, y, z, o;
++        o = GetOrientation() + plr->m_movementInfo.t_pos.m_orientation;
++        x = GetPositionX() + (plr->m_movementInfo.t_pos.m_positionX * cos(GetOrientation()) + plr->m_movementInfo.t_pos.m_positionY * sin(GetOrientation() + M_PI));
++        y = GetPositionY() + (plr->m_movementInfo.t_pos.m_positionY * cos(GetOrientation()) + plr->m_movementInfo.t_pos.m_positionX * sin(GetOrientation()));
++        z = GetPositionZ() + plr->m_movementInfo.t_pos.m_positionZ;
++        plr->Relocate(x, y, z, o);
++        UpdateData transData;
++        WorldPacket packet;
++        transData.BuildPacket(&packet);
++        plr->SendDirectMessage(&packet);
++    }
++}
+ 
+ void Transport::CalculatePassengerPosition(float& x, float& y, float& z, float& o)
+ {
+diff --git a/src/server/game/Entities/Transport/Transport.h b/src/server/game/Entities/Transport/Transport.h
+index 8fd12b5..04c4716 100755
+--- a/src/server/game/Entities/Transport/Transport.h
++++ b/src/server/game/Entities/Transport/Transport.h
+@@ -46,8 +46,10 @@ class Transport : public GameObject, public TransportBase
+         typedef std::set<Creature*> CreatureSet;
+         CreatureSet m_NPCPassengerSet;
+         uint32 AddNPCPassenger(uint32 tguid, uint32 entry, float x, float y, float z, float o, uint32 anim=0);
++		Creature* AddNPCPassengerInInstance(uint32 entry, float x, float y, float z, float o, uint32 anim=0);
+         void UpdatePosition(MovementInfo* mi);
+         void UpdateNPCPositions();
++		void UpdatePlayerPositions();
+ 
+         /// This method transforms supplied transport offsets into global coordinates
+         void CalculatePassengerPosition(float& x, float& y, float& z, float& o);
+@@ -95,10 +97,9 @@ class Transport : public GameObject, public TransportBase
+         uint32 m_nextNodeTime;
+ 
+     private:
+-        void TeleportTransport(uint32 newMapid, float x, float y, float z);
+-        void UpdateForMap(Map const* map);
++		void TeleportTransport(uint32 newMapid, float x, float y, float z);
++		void UpdateForMap(Map const* map);
+         void DoEventIfAny(WayPointMap::value_type const& node, bool departure);
+         WayPointMap::const_iterator GetNextWayPoint();
+ };
+ #endif
+-
+diff --git a/src/server/game/Instances/InstanceScript.cpp b/src/server/game/Instances/InstanceScript.cpp
+index f8df586..d9aa141 100755
+--- a/src/server/game/Instances/InstanceScript.cpp
++++ b/src/server/game/Instances/InstanceScript.cpp
+@@ -320,6 +320,23 @@ void InstanceScript::DoSendNotifyToInstance(char const* format, ...)
+     }
+ }
+ 
++// Complete Achievement for all players in instance
++void InstanceScript::DoCompleteAchievement(uint32 achievement)
++{
++    AchievementEntry const* pAE = sAchievementStore.LookupEntry(achievement);
++    Map::PlayerList const &PlayerList = instance->GetPlayers();
++
++    if (!pAE)
++    {
++        return;
++    }
++
++    if (!PlayerList.isEmpty())
++        for (Map::PlayerList::const_iterator i = PlayerList.begin(); i != PlayerList.end(); ++i)
++            if (Player *player = i->getSource())
++                player->CompletedAchievement(pAE);
++}
++
+ // Update Achievement Criteria for all players in instance
+ void InstanceScript::DoUpdateAchievementCriteria(AchievementCriteriaTypes type, uint32 miscValue1 /*= 0*/, uint32 miscValue2 /*= 0*/, Unit* unit /*= NULL*/)
+ {
+diff --git a/src/server/game/Instances/InstanceScript.h b/src/server/game/Instances/InstanceScript.h
+index f176683..4219e0c 100755
+--- a/src/server/game/Instances/InstanceScript.h
++++ b/src/server/game/Instances/InstanceScript.h
+@@ -174,6 +174,9 @@ class InstanceScript : public ZoneScript
+         // Send Notify to all players in instance
+         void DoSendNotifyToInstance(char const* format, ...);
+ 
++        // Complete Achievement for all players in instance
++        void DoCompleteAchievement(uint32 achievement);
++
+         // Update Achievement Criteria for all players in instance
+         void DoUpdateAchievementCriteria(AchievementCriteriaTypes type, uint32 miscValue1 = 0, uint32 miscValue2 = 0, Unit* unit = NULL);
+ 
+diff --git a/src/server/game/Maps/Map.cpp b/src/server/game/Maps/Map.cpp
+index 5ef0769..a2849e0 100755
+--- a/src/server/game/Maps/Map.cpp
++++ b/src/server/game/Maps/Map.cpp
+@@ -684,7 +684,7 @@ void Map::RemoveFromMap(T *obj, bool remove)
+ 
+     obj->UpdateObjectVisibility(true);
+     obj->RemoveFromGrid();
+-
++// gunship data
+     obj->ResetMap();
+ 
+     if (remove)
+@@ -1660,7 +1660,25 @@ float Map::GetHeight(float x, float y, float z, bool checkVMap /*= true*/, float
+             return vmapHeight;                              // we have only vmapHeight (if have)
+     }
+ 
+-    return mapHeight;                               // explicitly use map data
++else  
++
++    {  
++
++        if (!checkVMap)  
++
++            return mapHeight;                               // explicitly use map data (if have)  
++
++        else if (mapHeight > INVALID_HEIGHT && (z < mapHeight + 2 || z == MAX_HEIGHT))  
++
++            return mapHeight;                               // explicitly use map data if original z < mapHeight but map found (z+2 > mapHeight)  
++
++        else  
++
++            return VMAP_INVALID_HEIGHT_VALUE;               // we not have any height  
++
++    }  
++
++    //return mapHeight;                                // explicitly use map data
+ }
+ 
+ inline bool IsOutdoorWMO(uint32 mogpFlags, int32 /*adtId*/, int32 /*rootId*/, int32 /*groupId*/, WMOAreaTableEntry const* wmoEntry, AreaTableEntry const* atEntry)
+diff --git a/src/server/game/Maps/MapManager.h b/src/server/game/Maps/MapManager.h
+index aa07eef..8b2fcc4 100755
+--- a/src/server/game/Maps/MapManager.h
++++ b/src/server/game/Maps/MapManager.h
+@@ -123,12 +123,19 @@ class MapManager
+ 
+         void LoadTransports();
+         void LoadTransportNPCs();
++		
++        //Load transport to instance
++        Transport* LoadTransportInMap(Map* instance, uint32 goEntry, uint32 period);
++        void UnLoadTransportFromMap(Transport* t);
++        void LoadTransportForPlayers(Player* player);
++        void UnLoadTransportForPlayers(Player* player);
+ 
+         typedef std::set<Transport*> TransportSet;
+         TransportSet m_Transports;
+ 
+         typedef std::map<uint32, TransportSet> TransportMap;
+         TransportMap m_TransportsByMap;
++		TransportMap m_TransportsByInstanceIdMap;
+ 
+         bool CanPlayerEnter(uint32 mapid, Player* player, bool loginCheck = false);
+         void InitializeVisibilityDistanceInfo();
+diff --git a/src/server/game/Scripting/ScriptLoader.cpp b/src/server/game/Scripting/ScriptLoader.cpp
+index 39b5dce..95c87b8 100755
+--- a/src/server/game/Scripting/ScriptLoader.cpp
++++ b/src/server/game/Scripting/ScriptLoader.cpp
+@@ -487,6 +487,7 @@ void AddSC_boss_falric();
+ void AddSC_boss_marwyn();
+ void AddSC_boss_lord_marrowgar();       // Icecrown Citadel
+ void AddSC_boss_lady_deathwhisper();
++void AddSC_boss_gunship_battle();
+ void AddSC_boss_deathbringer_saurfang();
+ void AddSC_boss_festergut();
+ void AddSC_boss_rotface();
+@@ -1210,6 +1211,7 @@ void AddNorthrendScripts()
+     AddSC_boss_marwyn();
+     AddSC_boss_lord_marrowgar();        // Icecrown Citadel
+     AddSC_boss_lady_deathwhisper();
++	AddSC_boss_gunship_battle();
+     AddSC_boss_deathbringer_saurfang();
+     AddSC_boss_festergut();
+     AddSC_boss_rotface();
+diff --git a/src/server/scripts/Northrend/CMakeLists.txt b/src/server/scripts/Northrend/CMakeLists.txt
+index 22d0f37..bda3b32 100644
+--- a/src/server/scripts/Northrend/CMakeLists.txt
++++ b/src/server/scripts/Northrend/CMakeLists.txt
+@@ -167,6 +167,7 @@ set(scripts_STAT_SRCS
+   Northrend/IcecrownCitadel/icecrown_citadel_teleport.cpp
+   Northrend/IcecrownCitadel/boss_lord_marrowgar.cpp
+   Northrend/IcecrownCitadel/boss_lady_deathwhisper.cpp
++  Northrend/IcecrownCitadel/boss_gunship_battle.cpp
+   Northrend/IcecrownCitadel/boss_deathbringer_saurfang.cpp
+   Northrend/IcecrownCitadel/boss_festergut.cpp
+   Northrend/IcecrownCitadel/boss_rotface.cpp
+diff --git a/src/server/scripts/Northrend/IcecrownCitadel/icecrown_citadel.cpp b/src/server/scripts/Northrend/IcecrownCitadel/icecrown_citadel.cpp
+index 17e3391..14ea639 100644
+--- a/src/server/scripts/Northrend/IcecrownCitadel/icecrown_citadel.cpp
++++ b/src/server/scripts/Northrend/IcecrownCitadel/icecrown_citadel.cpp
+@@ -255,6 +255,11 @@ enum EventTypes
+ 
+     // Invisible Stalker (Float, Uninteractible, LargeAOI)
+     EVENT_SOUL_MISSILE                  = 55,
++	
++    // Sindragosas Ward
++    EVENT_SUB_WAVE_1                    = 56,
++    EVENT_SUB_WAVE_2                    = 57,
++    EVENT_UPDATE_CHECK                  = 58,
+ };
+ 
+ enum DataTypesICC
+@@ -285,6 +290,24 @@ enum MovementPoints
+     POINT_LAND  = 1,
+ };
+ 
++const Position SvalnaLandPos = {4356.71f, 2484.33f, 358.5f, 1.571f};
++
++const Position SindragosaGauntletSpawn[12] =
++{
++    { 4130.71f, 2484.10f, 211.033f, 0 },
++    { 4137.93f, 2505.52f, 211.033f, 0 },
++    { 4160.64f, 2528.13f, 211.033f, 0 },
++    { 4180.81f, 2533.88f, 211.033f, 0 },
++    { 4200.92f, 2527.18f, 211.033f, 0 },
++    { 4222.23f, 2503.56f, 211.033f, 0 },
++    { 4229.40f, 2484.63f, 211.033f, 0 },
++    { 4222.01f, 2464.93f, 211.033f, 0 },
++    { 4201.55f, 2441.03f, 211.033f, 0 },
++    { 4181.29f, 2433.38f, 211.033f, 0 },
++    { 4161.86f, 2441.94f, 211.033f, 0 },
++    { 4138.78f, 2463.95f, 211.033f, 0 },
++};
++
+ class FrostwingVrykulSearcher
+ {
+     public:
+@@ -2135,6 +2158,214 @@ class at_icc_start_frostwing_gauntlet : public AreaTriggerScript
+         }
+ };
+ 
++class npc_sindragosas_ward : public CreatureScript
++{
++    public:
++        npc_sindragosas_ward() : CreatureScript("npc_sindragosas_ward") { }
++
++        struct npc_sindragosas_wardAI : public BossAI
++        {
++            npc_sindragosas_wardAI(Creature* creature) : BossAI(creature, DATA_SINDRAGOSA_GAUNTLET)
++            {
++            }
++
++            void Reset()
++            {
++                _Reset();
++                _isEventInProgressOrDone = false;
++                _spawnCountToBeSummonedInWave = 0;
++                _waveNumber = 0;
++            }
++
++            void DoAction(int32 const action)
++            {
++                if (action == ACTION_START_GAUNTLET)
++                    if (!_isEventInProgressOrDone)
++                        if (!IsAnyPlayerOutOfRange())
++                            DoZoneInCombat(me, 150.0f);
++            }
++
++            void EnterCombat(Unit* /*attacker*/)
++            {
++                _EnterCombat();
++                _isEventInProgressOrDone = true;
++                _spawnCountToBeSummonedInWave = 32;
++                _waveNumber = 1;
++                DoSummonWave(_waveNumber);
++                events.ScheduleEvent(EVENT_SUB_WAVE_1, 10000);
++                events.ScheduleEvent(EVENT_SUB_WAVE_2, 25000);
++                events.ScheduleEvent(EVENT_UPDATE_CHECK, 5000);
++            }
++
++            void DoSummonWave(uint8 number)
++            {
++                switch (number)
++                {
++                    case 1:
++                    case 3:
++                        me->SummonCreature(NPC_NERUBAR_WEBWEAVER, SindragosaGauntletSpawn[1], TEMPSUMMON_TIMED_DESPAWN_OUT_OF_COMBAT, 120000);
++                        me->SummonCreature(NPC_NERUBAR_WEBWEAVER, SindragosaGauntletSpawn[4], TEMPSUMMON_TIMED_DESPAWN_OUT_OF_COMBAT, 120000);
++                        me->SummonCreature(NPC_NERUBAR_WEBWEAVER, SindragosaGauntletSpawn[7], TEMPSUMMON_TIMED_DESPAWN_OUT_OF_COMBAT, 120000);
++                        me->SummonCreature(NPC_NERUBAR_WEBWEAVER, SindragosaGauntletSpawn[10], TEMPSUMMON_TIMED_DESPAWN_OUT_OF_COMBAT, 120000);
++                        me->SummonCreature(NPC_NERUBAR_CHAMPION, SindragosaGauntletSpawn[2], TEMPSUMMON_TIMED_DESPAWN_OUT_OF_COMBAT, 120000);
++                        me->SummonCreature(NPC_NERUBAR_CHAMPION, SindragosaGauntletSpawn[5], TEMPSUMMON_TIMED_DESPAWN_OUT_OF_COMBAT, 120000);
++                        me->SummonCreature(NPC_NERUBAR_CHAMPION, SindragosaGauntletSpawn[8], TEMPSUMMON_TIMED_DESPAWN_OUT_OF_COMBAT, 120000);
++                        me->SummonCreature(NPC_NERUBAR_CHAMPION, SindragosaGauntletSpawn[11], TEMPSUMMON_TIMED_DESPAWN_OUT_OF_COMBAT, 120000);
++                        break;
++                    case 2:
++                        me->SummonCreature(NPC_FROSTWARDEN_SORCERESS, SindragosaGauntletSpawn[3], TEMPSUMMON_TIMED_DESPAWN_OUT_OF_COMBAT, 120000);
++                        me->SummonCreature(NPC_FROSTWARDEN_SORCERESS, SindragosaGauntletSpawn[9], TEMPSUMMON_TIMED_DESPAWN_OUT_OF_COMBAT, 120000);
++                        me->SummonCreature(NPC_FROSTWARDEN_WARRIOR, SindragosaGauntletSpawn[3], TEMPSUMMON_TIMED_DESPAWN_OUT_OF_COMBAT, 120000);
++                        me->SummonCreature(NPC_FROSTWARDEN_WARRIOR, SindragosaGauntletSpawn[9], TEMPSUMMON_TIMED_DESPAWN_OUT_OF_COMBAT, 120000);
++                        me->SummonCreature(NPC_FROSTWARDEN_WARRIOR, SindragosaGauntletSpawn[3], TEMPSUMMON_TIMED_DESPAWN_OUT_OF_COMBAT, 120000);
++                        me->SummonCreature(NPC_FROSTWARDEN_WARRIOR, SindragosaGauntletSpawn[9], TEMPSUMMON_TIMED_DESPAWN_OUT_OF_COMBAT, 120000);
++                        break;
++                    case EVENT_SUB_WAVE_1:
++                    case EVENT_SUB_WAVE_2:
++                        for (uint8 i = 0; i < 12; i++)
++                            me->SummonCreature(NPC_NERUBAR_BROODLING, SindragosaGauntletSpawn[i], TEMPSUMMON_TIMED_DESPAWN_OUT_OF_COMBAT, 120000);
++                        break;
++                    default:
++                        break;
++                }
++            }
++
++            bool IsAnyPlayerOutOfRange()
++            {
++                if (!me->GetMap())
++                    return true;
++
++                Map::PlayerList const& playerList = me->GetMap()->GetPlayers();
++
++                if (playerList.isEmpty())
++                    return true;
++
++                for (Map::PlayerList::const_iterator itr = playerList.begin(); itr != playerList.end(); ++itr)
++                {
++                    if (Player* player = itr->getSource())
++                    {
++                        if (player->isGameMaster())
++                            continue;
++
++                        if (player->isAlive() && me->GetDistance(player) > 125.0f)
++                            return true;
++                    }
++                }
++
++                return false;
++            }
++
++            void JustSummoned(Creature* summon)
++            {
++                summons.Summon(summon);
++                DoZoneInCombat(summon, 150.0f);
++            }
++
++            void SummonedCreatureDies(Creature* summon, Unit* /*who*/)
++            {
++                _spawnCountToBeSummonedInWave--;
++                summon->DespawnOrUnsummon(30000);
++            }
++
++            void SummonedCreatureDespawn(Creature* summon)
++            {
++                // This one should never happen, if summoned creature despawns alive, reset!
++                if (summon->isAlive())
++                {
++                    EnterEvadeMode();
++                    return;
++                }
++
++                summons.Despawn(summon);
++            }
++
++            void UpdateAI(uint32 const diff)
++            {
++                if (!UpdateVictim() || !_isEventInProgressOrDone)
++                    return;
++
++                events.Update(diff);
++
++                while (uint32 eventId = events.ExecuteEvent())
++                {
++                    switch (eventId)
++                    {
++                        case EVENT_SUB_WAVE_1:
++                            DoSummonWave(EVENT_SUB_WAVE_1);
++                            break;
++                        case EVENT_SUB_WAVE_2:
++                            DoSummonWave(EVENT_SUB_WAVE_2);
++                            break;
++                        case EVENT_UPDATE_CHECK:
++                        {
++                            if (_spawnCountToBeSummonedInWave <= 5)
++                            {
++                                if (summons.size() < _spawnCountToBeSummonedInWave)
++                                    _spawnCountToBeSummonedInWave = summons.size();
++
++                                if (!_spawnCountToBeSummonedInWave)
++                                {
++                                    switch (_waveNumber)
++                                    {
++                                        case 1:
++                                            _spawnCountToBeSummonedInWave += 30;
++                                            break;
++                                        case 2:
++                                            _spawnCountToBeSummonedInWave += 32;
++                                            break;
++                                        case 3:
++                                            me->Kill(me);
++                                            return;
++                                    }
++
++                                    _waveNumber++;
++                                    DoSummonWave(_waveNumber);
++                                    events.ScheduleEvent(EVENT_SUB_WAVE_1, 10000);
++                                    events.ScheduleEvent(EVENT_SUB_WAVE_2, 25000);
++                                }
++                            }
++
++                            if (IsAnyPlayerOutOfRange())
++                            {
++                                EnterEvadeMode();
++                                return;
++                            }
++
++                            events.ScheduleEvent(EVENT_UPDATE_CHECK, 5000);
++                            break;
++                        }
++                        default:
++                            break;
++                    }
++                }
++            }
++
++        private:
++            bool _isEventInProgressOrDone;
++            uint32 _spawnCountToBeSummonedInWave;
++            uint8 _waveNumber;
++        };
++
++        CreatureAI* GetAI(Creature* creature) const
++        {
++            return GetIcecrownCitadelAI<npc_sindragosas_wardAI>(creature);
++        }
++};
++
++class at_icc_start_sindragosa_gauntlet : public AreaTriggerScript
++{
++    public:
++        at_icc_start_sindragosa_gauntlet() : AreaTriggerScript("at_icc_start_sindragosa_gauntlet") { }
++
++        bool OnTrigger(Player* player, AreaTriggerEntry const* /*areaTrigger*/)
++        {
++            if (InstanceScript* instance = player->GetInstanceScript())
++                if (Creature* ward = ObjectAccessor::GetCreature(*player, instance->GetData64(DATA_SINDRAGOSA_GAUNTLET)))
++                    ward->AI()->DoAction(ACTION_START_GAUNTLET);
++            return true;
++        }
++};
++
+ void AddSC_icecrown_citadel()
+ {
+     new npc_highlord_tirion_fordring_lh();
+@@ -2162,4 +2393,6 @@ void AddSC_icecrown_citadel()
+     new at_icc_shutdown_traps();
+     new at_icc_start_blood_quickening();
+     new at_icc_start_frostwing_gauntlet();
++    new npc_sindragosas_ward();
++    new at_icc_start_sindragosa_gauntlet();
+ }
+diff --git a/src/server/scripts/Northrend/IcecrownCitadel/icecrown_citadel.h b/src/server/scripts/Northrend/IcecrownCitadel/icecrown_citadel.h
+index 31639a6..e7d478d 100755
+--- a/src/server/scripts/Northrend/IcecrownCitadel/icecrown_citadel.h
++++ b/src/server/scripts/Northrend/IcecrownCitadel/icecrown_citadel.h
+@@ -24,7 +24,7 @@
+ 
+ #define ICCScriptName "instance_icecrown_citadel"
+ 
+-uint32 const EncounterCount = 13;
++uint32 const EncounterCount = 14;
+ uint32 const WeeklyNPCs = 9;
+ uint32 const MaxHeroicAttempts = 50;
+ 
+@@ -82,35 +82,56 @@ enum DataTypes
+     DATA_VALITHRIA_DREAMWALKER      = 10,
+     DATA_SINDRAGOSA                 = 11,
+     DATA_THE_LICH_KING              = 12,
++    DATA_SINDRAGOSA_GAUNTLET        = 13,
+ 
+     // Additional data
+-    DATA_SAURFANG_EVENT_NPC         = 13,
+-    DATA_BONED_ACHIEVEMENT          = 14,
+-    DATA_OOZE_DANCE_ACHIEVEMENT     = 15,
+-    DATA_PUTRICIDE_TABLE            = 16,
+-    DATA_NAUSEA_ACHIEVEMENT         = 17,
+-    DATA_ORB_WHISPERER_ACHIEVEMENT  = 18,
+-    DATA_PRINCE_KELESETH_GUID       = 19,
+-    DATA_PRINCE_TALDARAM_GUID       = 20,
+-    DATA_PRINCE_VALANAR_GUID        = 21,
+-    DATA_BLOOD_PRINCES_CONTROL      = 22,
+-    DATA_SINDRAGOSA_FROSTWYRMS      = 23,
+-    DATA_SPINESTALKER               = 24,
+-    DATA_RIMEFANG                   = 25,
+-    DATA_COLDFLAME_JETS             = 26,
+-    DATA_TEAM_IN_INSTANCE           = 27,
+-    DATA_BLOOD_QUICKENING_STATE     = 28,
+-    DATA_HEROIC_ATTEMPTS            = 29,
+-    DATA_CROK_SCOURGEBANE           = 30,
+-    DATA_CAPTAIN_ARNATH             = 31,
+-    DATA_CAPTAIN_BRANDON            = 32,
+-    DATA_CAPTAIN_GRONDEL            = 33,
+-    DATA_CAPTAIN_RUPERT             = 34,
+-    DATA_VALITHRIA_TRIGGER          = 35,
+-    DATA_VALITHRIA_LICH_KING        = 36,
+-    DATA_HIGHLORD_TIRION_FORDRING   = 37,
+-    DATA_ARTHAS_PLATFORM            = 38,
+-    DATA_TERENAS_MENETHIL           = 39,
++    DATA_SAURFANG_EVENT_NPC         = 14,
++    DATA_BONED_ACHIEVEMENT          = 15,
++    DATA_OOZE_DANCE_ACHIEVEMENT     = 16,
++    DATA_PUTRICIDE_TABLE            = 17,
++    DATA_NAUSEA_ACHIEVEMENT         = 18,
++    DATA_ORB_WHISPERER_ACHIEVEMENT  = 19,
++    DATA_PRINCE_KELESETH_GUID       = 20,
++    DATA_PRINCE_TALDARAM_GUID       = 21,
++    DATA_PRINCE_VALANAR_GUID        = 22,
++    DATA_BLOOD_PRINCES_CONTROL      = 23,
++    DATA_SINDRAGOSA_FROSTWYRMS      = 24,
++    DATA_SPINESTALKER               = 25,
++    DATA_RIMEFANG                   = 26,
++    DATA_COLDFLAME_JETS             = 27,
++    DATA_TEAM_IN_INSTANCE           = 28,
++    DATA_BLOOD_QUICKENING_STATE     = 29,
++    DATA_HEROIC_ATTEMPTS            = 30,
++    DATA_CROK_SCOURGEBANE           = 31,
++    DATA_CAPTAIN_ARNATH             = 32,
++    DATA_CAPTAIN_BRANDON            = 33,
++    DATA_CAPTAIN_GRONDEL            = 34,
++    DATA_CAPTAIN_RUPERT             = 35,
++    DATA_VALITHRIA_TRIGGER          = 36,
++    DATA_VALITHRIA_LICH_KING        = 37,
++    DATA_HIGHLORD_TIRION_FORDRING   = 38,
++    DATA_ARTHAS_PLATFORM            = 39,
++    DATA_TERENAS_MENETHIL           = 40,
++	
++     // Gunship: Data for achievements
++    DATA_BEEN_WAITING_ACHIEVEMENT   = 49,
++    DATA_NECK_DEEP_ACHIEVEMENT      = 50,
++
++    // Gunship: Data for the fight
++    // The numbering is very high for safety -- custom patch!
++    DATA_FIRST_SQUAD_STATE                  = 100,
++    DATA_SECOND_SQUAD_STATE                 = 101,
++    DATA_SPIRE_FROSTWYRM_STATE              = 102,
++    DATA_GB_HIGH_OVERLORD_SAURFANG          = 103,
++    DATA_GB_MURADIN_BRONZEBEARD             = 104,
++    DATA_HIGH_OVERLORD_SAURFANG_NOT_VISUAL  = 105,
++    DATA_GB_BATTLE_MAGE                     = 106,
++    DATA_SKYBREAKER_BOSS                    = 107,
++    DATA_ORGRIMMAR_HAMMER_BOSS              = 108,
++    DATA_MURADIN_BRONZEBEARD_NOT_VISUAL     = 109,
++    DATA_MURADIN_BRONZEBEARD                = 110,
++    DATA_GUNSHIP_BATTLE                     = 111,
++    GUID_PLAYER_LOCATION                    = 112,
+ };
+ 
+ enum CreaturesIds
+@@ -276,6 +297,47 @@ enum CreaturesIds
+     NPC_WORLD_TRIGGER_INFINITE_AOI              = 36171,
+     NPC_SPIRIT_BOMB                             = 39189,
+     NPC_FROSTMOURNE_TRIGGER                     = 38584,
++	
++   // Gunship: Ids of NPCs
++    NPC_GB_SKYBREAKER                           = 37540,
++    NPC_GB_ORGRIMS_HAMMER                       = 37215,
++    NPC_GB_HIGH_OVERLORD_SAURFANG               = 36939,
++    NPC_GB_MURADIN_BRONZEBEARD                  = 36948,
++    NPC_GB_HIHG_CAPTAIN_JUSTIN_BARTLETT         = 37182,
++    NPC_GB_HIGH_OVERLORD_SAURFANG_NOT_VISUAL    = 50004,
++    NPC_GB_MURADIN_BRONZEBEARD_NOT_VISUAL       = 50006,
++    NPC_GB_SKYBREAKER_SORCERER                  = 37026,
++    NPC_GB_SKYBREAKER_SORCERERS                 = 37116,
++    NPC_GB_KORKRON_REAVER                       = 37920,
++    NPC_GB_KORKRON_REAVERS                      = 36957,
++    NPC_GB_KORKRON_SERGANTE                     = 36960,
++    NPC_GB_SKYBREAKER_SERGANTE                  = 36961,
++    NPC_GB_KORKRON_BATTLE_MAGE                  = 37117,
++    NPC_GB_SKYBREAKER_MARINE                    = 36950,
++    NPC_GB_KORKRON_ROCKETEER                    = 36982,
++    NPC_GB_SKYBREAKER_MORTAR_SOLDIER            = 36978,
++    NPC_GB_KORKRON_AXETHROWER                   = 36968,
++    NPC_GB_SKYBREAKER_RIFLEMAN                  = 36969,
++    NPC_GB_SKYBREAKER_DECKHAND                  = 36970,
++    NPC_GB_ZAFOD_BOOMBOX                        = 37184,
++    NPC_GB_ALLIANCE_CANON                       = 36838,
++    NPC_GB_HORDE_CANON                          = 36839,
++    NPC_GB_INVISIBLE_STALKER                    = 32780,
++    NPC_GB_PORTAL                               = 37227,
++    NPC_GB_GUNSHIP_HULL                         = 37547,
++
++    // Gunship: Ids missing from trash
++    NPC_KORKRON_INVOKER                         = 37033,
++    NPC_SPIRE_FROSTWYRM                         = 37230,
++    NPC_SKYBREAKER_SORCERER                     = 37026,
++
++    // Sindragosas Ward
++    NPC_SINDRAGOSAS_WARD                        = 37503,
++    NPC_NERUBAR_WEBWEAVER                       = 37502,
++    NPC_NERUBAR_CHAMPION                        = 37501,
++    NPC_NERUBAR_BROODLING                       = 37232,
++    NPC_FROSTWARDEN_WARRIOR                     = 37228,
++    NPC_FROSTWARDEN_SORCERESS                   = 37229,
+ 
+     // Generic
+     NPC_INVISIBLE_STALKER                       = 30298,
+@@ -362,6 +424,22 @@ enum GameObjectsIds
+     GO_FROZEN_LAVAMAN                       = 202436,
+     GO_LAVAMAN_PILLARS_CHAINED              = 202437,
+     GO_LAVAMAN_PILLARS_UNCHAINED            = 202438,
++	
++
++   //Gunship: Ids of GameObjects
++    GO_ORGRIM_S_HAMMER_HORDE_ICC            = 201812,
++    GO_ORGRIM_S_HAMMER_ALLIANCE_ICC         = 201581,
++    GO_THE_SKYBREAKER_HORDE_ICC             = 201811,
++    GO_THE_SKYBREAKER_ALLIANCE_ICC          = 201580,
++    GO_CAPITAN_CHEST_A_10N                  = 201872,
++    GO_CAPITAN_CHEST_A_25N                  = 201873,
++    GO_CAPITAN_CHEST_A_10H                  = 201874,
++    GO_CAPITAN_CHEST_A_25H                  = 201875,
++    GO_CAPITAN_CHEST_H_10N                  = 202177,
++    GO_CAPITAN_CHEST_H_25N                  = 202178,
++    GO_CAPITAN_CHEST_H_10H                  = 202179,
++    GO_CAPITAN_CHEST_H_25H                  = 202180,
++
+ };
+ 
+ enum AchievementCriteriaIds
+diff --git a/src/server/scripts/Northrend/IcecrownCitadel/instance_icecrown_citadel.cpp b/src/server/scripts/Northrend/IcecrownCitadel/instance_icecrown_citadel.cpp
+index 650f426..8686b67 100755
+--- a/src/server/scripts/Northrend/IcecrownCitadel/instance_icecrown_citadel.cpp
++++ b/src/server/scripts/Northrend/IcecrownCitadel/instance_icecrown_citadel.cpp
+@@ -23,6 +23,8 @@
+ #include "PoolMgr.h"
+ #include "AccountMgr.h"
+ #include "icecrown_citadel.h"
++#include "MapManager.h"
++#include "Transport.h"
+ 
+ enum EventIds
+ {
+@@ -60,6 +62,7 @@ DoorData const doorData[] =
+     {GO_DOODAD_ICECROWN_ROOSTPORTCULLIS_02,  DATA_VALITHRIA_DREAMWALKER, DOOR_TYPE_SPAWN_HOLE, BOUNDARY_S   },
+     {GO_DOODAD_ICECROWN_ROOSTPORTCULLIS_03,  DATA_VALITHRIA_DREAMWALKER, DOOR_TYPE_SPAWN_HOLE, BOUNDARY_N   },
+     {GO_DOODAD_ICECROWN_ROOSTPORTCULLIS_04,  DATA_VALITHRIA_DREAMWALKER, DOOR_TYPE_SPAWN_HOLE, BOUNDARY_S   },
++    {GO_SINDRAGOSA_ENTRANCE_DOOR,            DATA_SINDRAGOSA_GAUNTLET,   DOOR_TYPE_PASSAGE,    BOUNDARY_N   },
+     {GO_SINDRAGOSA_ENTRANCE_DOOR,            DATA_SINDRAGOSA,            DOOR_TYPE_ROOM,       BOUNDARY_S   },
+     {GO_SINDRAGOSA_SHORTCUT_ENTRANCE_DOOR,   DATA_SINDRAGOSA,            DOOR_TYPE_PASSAGE,    BOUNDARY_E   },
+     {GO_SINDRAGOSA_SHORTCUT_EXIT_DOOR,       DATA_SINDRAGOSA,            DOOR_TYPE_PASSAGE,    BOUNDARY_NONE},
+@@ -103,6 +106,18 @@ class instance_icecrown_citadel : public InstanceMapScript
+                 TeamInInstance = 0;
+                 HeroicAttempts = MaxHeroicAttempts;
+                 LadyDeathwisperElevatorGUID = 0;
++				// Gunship event
++                FirstSquadState = 0;
++                SecondSquadState = 0;
++                SpireSquadState = 0;
++                SkybreakerBossGUID = 0;
++                OrgrimmarBossGUID = 0;
++                DeathbringerSaurfangGbGUID = 0;
++                MuradinBronzebeardGbGUID = 0;
++                DeathbringerSaurfangNotVisualGUID = 0;
++                MuradinBronzebeardNotVisualGUID = 0;
++                GbBattleMageGUID = 0;
++                // Gunship Battle				
+                 DeathbringerSaurfangGUID = 0;
+                 DeathbringerSaurfangDoorGUID = 0;
+                 DeathbringerSaurfangEventGUID = 0;
+@@ -146,6 +161,9 @@ class instance_icecrown_citadel : public InstanceMapScript
+                 ColdflameJetsState = NOT_STARTED;
+                 BloodQuickeningState = NOT_STARTED;
+                 BloodQuickeningMinutes = 0;
++                SindragosasWardGUID = 0;
++				
++				isPrepared = false;
+             }
+ 
+             void FillInitialWorldStates(WorldPacket& data)
+@@ -161,6 +179,7 @@ class instance_icecrown_citadel : public InstanceMapScript
+             {
+                 if (!TeamInInstance)
+                     TeamInInstance = player->GetTeam();
++                    PrepareGunshipEvent(player); // Spawn Gunship Event
+             }
+ 
+             void OnCreatureCreate(Creature* creature)
+@@ -175,6 +194,28 @@ class instance_icecrown_citadel : public InstanceMapScript
+ 
+                 switch (creature->GetEntry())
+                 {
++                    case NPC_GB_SKYBREAKER:	
++                        SkybreakerBossGUID = creature->GetGUID();	
++                        break;	
++                    case NPC_GB_ORGRIMS_HAMMER:	
++                        OrgrimmarBossGUID = creature->GetGUID();	
++                        break;	
++                    case NPC_GB_HIGH_OVERLORD_SAURFANG:	
++                        DeathbringerSaurfangGbGUID = creature->GetGUID();	
++                        break;	
++                    case NPC_GB_MURADIN_BRONZEBEARD:	
++                        MuradinBronzebeardGbGUID = creature->GetGUID();	
++                        break;	
++                    case NPC_GB_HIGH_OVERLORD_SAURFANG_NOT_VISUAL:
++                        DeathbringerSaurfangNotVisualGUID = creature->GetGUID();	
++                        break;	
++                    case NPC_GB_MURADIN_BRONZEBEARD_NOT_VISUAL:	
++                        MuradinBronzebeardNotVisualGUID = creature->GetGUID();	
++                        break;	
++                    case NPC_GB_SKYBREAKER_SORCERERS:	
++                    case NPC_GB_KORKRON_BATTLE_MAGE:	
++                        GbBattleMageGUID = creature->GetGUID();	
++                        break;
+                     case NPC_KOR_KRON_GENERAL:
+                         if (TeamInInstance == ALLIANCE)
+                             creature->UpdateEntry(NPC_ALLIANCE_COMMANDER, ALLIANCE);
+@@ -301,6 +342,9 @@ class instance_icecrown_citadel : public InstanceMapScript
+                         creature->SetCorpseDelay(0);
+                         creature->SetReactState(REACT_PASSIVE);
+                         break;
++                    case NPC_SINDRAGOSAS_WARD:
++                        SindragosasWardGUID = creature->GetGUID();
++						break;
+                     default:
+                         break;
+                 }
+@@ -550,6 +594,30 @@ class instance_icecrown_citadel : public InstanceMapScript
+                         if (GetBossState(DATA_THE_LICH_KING) == DONE)
+                             go->SetRespawnTime(7 * DAY);
+                         break;
++                    //Gunship: Assignments
++                    case NPC_GB_SKYBREAKER:
++                        SkybreakerBossGUID = go->GetGUID();
++                        break;
++                    case NPC_GB_ORGRIMS_HAMMER:
++                        OrgrimmarBossGUID = go->GetGUID();
++                        break;
++                    case NPC_GB_HIGH_OVERLORD_SAURFANG:
++                        DeathbringerSaurfangGbGUID = go->GetGUID();
++                        break;
++                    case NPC_GB_MURADIN_BRONZEBEARD:
++                        MuradinBronzebeardGbGUID = go->GetGUID();
++                        break;
++                    case NPC_GB_HIGH_OVERLORD_SAURFANG_NOT_VISUAL:
++                        DeathbringerSaurfangNotVisualGUID = go->GetGUID();
++                        break;
++                    case NPC_GB_MURADIN_BRONZEBEARD_NOT_VISUAL:
++                        MuradinBronzebeardNotVisualGUID = go->GetGUID();
++                        break;
++                    case NPC_GB_SKYBREAKER_SORCERERS:
++                    case NPC_GB_KORKRON_BATTLE_MAGE:
++                        GbBattleMageGUID = go->GetGUID();
++                        break;
++
+                     default:
+                         break;
+                 }
+@@ -673,6 +741,23 @@ class instance_icecrown_citadel : public InstanceMapScript
+                         return ArthasPlatformGUID;
+                     case DATA_TERENAS_MENETHIL:
+                         return TerenasMenethilGUID;
++						//Gunship: To merge all
++                    case DATA_SKYBREAKER_BOSS:
++                        return SkybreakerBossGUID;
++                    case DATA_ORGRIMMAR_HAMMER_BOSS:
++                        return OrgrimmarBossGUID;
++                    case DATA_GB_HIGH_OVERLORD_SAURFANG:
++                        return DeathbringerSaurfangGbGUID;
++                    case DATA_GB_MURADIN_BRONZEBEARD:
++                        return MuradinBronzebeardGbGUID;
++                    case DATA_HIGH_OVERLORD_SAURFANG_NOT_VISUAL:
++                        return DeathbringerSaurfangNotVisualGUID;
++                    case DATA_MURADIN_BRONZEBEARD_NOT_VISUAL:
++                        return MuradinBronzebeardNotVisualGUID;
++                    case DATA_GB_BATTLE_MAGE:
++                        return GbBattleMageGUID;
++                    case DATA_SINDRAGOSA_GAUNTLET:
++                        return SindragosasWardGUID;
+                     default:
+                         break;
+                 }
+@@ -688,7 +773,7 @@ class instance_icecrown_citadel : public InstanceMapScript
+                 switch (type)
+                 {
+                     case DATA_LADY_DEATHWHISPER:
+-                        SetBossState(DATA_GUNSHIP_EVENT, state);    // TEMP HACK UNTIL GUNSHIP SCRIPTED
++                        //SetBossState(DATA_GUNSHIP_EVENT, state);
+                         if (state == DONE)
+                         {
+                             if (GameObject* elevator = instance->GetGameObject(LadyDeathwisperElevatorGUID))
+@@ -1254,6 +1339,206 @@ class instance_icecrown_citadel : public InstanceMapScript
+                         break;
+                 }
+             }
++            // Gunship: this sucks, do it differently
++            void PrepareGunshipEvent(Player* player)
++            {
++                Transport* th;
++                Transport* t;
++
++                if (GetBossState(DATA_GUNSHIP_EVENT) == DONE)
++                    return;
++
++                if(!isPrepared)
++                {
++                if(TeamInInstance == ALLIANCE)
++                {
++                    if(th = sMapMgr->LoadTransportInMap(instance, GO_ORGRIM_S_HAMMER_ALLIANCE_ICC, 108000))
++                    {
++                        th->AddNPCPassengerInInstance(NPC_GB_ORGRIMS_HAMMER, 1.845810f, 1.268872f, 34.526218f, 1.5890f);
++                        th->AddNPCPassengerInInstance(NPC_GB_HIGH_OVERLORD_SAURFANG, 37.18615f, 0.00016f, 36.78849f, 3.13683f);
++                        th->AddNPCPassengerInInstance(NPC_GB_INVISIBLE_STALKER, 37.18615f, 0.00016f, 36.78849f, 3.13683f);
++                        th->AddNPCPassengerInInstance(NPC_GB_KORKRON_BATTLE_MAGE, 47.2929f, -4.308941f, 37.5555f, 3.05033f);
++                        th->AddNPCPassengerInInstance(NPC_GB_KORKRON_BATTLE_MAGE, 47.34621f, 4.032004f, 37.70952f, 3.05033f);
++                        th->AddNPCPassengerInInstance(NPC_GB_KORKRON_BATTLE_MAGE, 15.03016f, 0.00016f, 37.70952f, 1.55138f);
++                        th->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, -13.19547f, -27.160213f, 35.47252f, 3.10672f);
++                        th->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, -18.33902f, -25.230491f, 33.04052f, 3.00672f);
++                        th->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, -60.1251f, -1.27014f, 42.8335f, 5.16073f);
++                        th->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, -48.2651f, 16.78034f, 34.2515f, 0.04292f);
++                        th->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, -14.8356f, 27.931688f, 33.363f, 1.73231f);
++                        th->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 10.2702f, 20.62966f, 35.37483f, 1.6f);
++                        th->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 39.32459f, 14.50176f, 36.88428f, 1.6f);
++                        th->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 46.17223f, -6.638763f, 37.35444f, 1.32f);
++                        th->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 27.4456f, -13.397498f, 36.34746f, 1.6f);
++                        th->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 18.16184f, 1.37897f, 35.31705f, 1.6f);
++                        th->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, -18.11516f, -0.196236f, 45.15709f, 2.9f);
++                        th->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, -18.11844f, -0.19624f, 49.18192f, 1.6f);
++
++                        if (instance->ToInstanceMap()->GetMaxPlayers() == 10)
++                        {
++                            th->AddNPCPassengerInInstance(NPC_GB_KORKRON_AXETHROWER, -3.170555f, 28.30652f, 34.21082f, 1.66527f);
++                            th->AddNPCPassengerInInstance(NPC_GB_KORKRON_AXETHROWER, -12.0928f, 27.65942f, 33.58557f, 1.66527f);
++                            th->AddNPCPassengerInInstance(NPC_GB_KORKRON_AXETHROWER, 14.92804f, 26.18018f, 35.47803f, 1.66527f);
++                            th->AddNPCPassengerInInstance(NPC_GB_KORKRON_AXETHROWER, 24.70331f, 25.36584f, 35.97845f, 1.66527f);
++                            th->AddNPCPassengerInInstance(NPC_GB_KORKRON_ROCKETEER, -11.44849f, -25.71838f, 33.64343f, 1.49248f);
++                            th->AddNPCPassengerInInstance(NPC_GB_KORKRON_ROCKETEER, 12.30336f, -25.69653f, 35.32373f, 1.49248f);
++                        }
++                        else
++                        {
++                            th->AddNPCPassengerInInstance(NPC_GB_KORKRON_AXETHROWER, -3.170555f, 28.30652f, 34.21082f, 1.66527f);
++                            th->AddNPCPassengerInInstance(NPC_GB_KORKRON_AXETHROWER, -12.0928f, 27.65942f, 33.58557f, 1.66527f);
++                            th->AddNPCPassengerInInstance(NPC_GB_KORKRON_AXETHROWER, 14.92804f, 26.18018f, 35.47803f, 1.66527f);
++                            th->AddNPCPassengerInInstance(NPC_GB_KORKRON_AXETHROWER, 24.70331f, 25.36584f, 35.97845f, 1.66527f);
++                            th->AddNPCPassengerInInstance(NPC_GB_KORKRON_AXETHROWER, 19.92804f, 27.18018f, 35.47803f, 1.66527f);
++                            th->AddNPCPassengerInInstance(NPC_GB_KORKRON_AXETHROWER, -7.70331f, 28.36584f, 33.88557f, 1.66527f);
++                            th->AddNPCPassengerInInstance(NPC_GB_KORKRON_ROCKETEER, -11.44849f, -25.71838f, 33.64343f, 1.49248f);
++                            th->AddNPCPassengerInInstance(NPC_GB_KORKRON_ROCKETEER, 12.30336f, -25.69653f, 35.32373f, 1.49248f);
++                            th->AddNPCPassengerInInstance(NPC_GB_KORKRON_ROCKETEER, -3.44849f, -25.71838f, 34.21082f, 1.49248f);
++                            th->AddNPCPassengerInInstance(NPC_GB_KORKRON_ROCKETEER, 3.30336f, -25.69653f, 35.32373f, 1.49248f);
++                        }
++                    }
++
++                    if(t = sMapMgr->LoadTransportInMap(instance, GO_THE_SKYBREAKER_ALLIANCE_ICC, 108000))
++                    {
++                        t->AddNPCPassengerInInstance(NPC_GB_SKYBREAKER, -17.156807f, -1.633260f, 20.81273f, 4.52672f);
++                        t->AddNPCPassengerInInstance(NPC_GB_MURADIN_BRONZEBEARD, 13.51547f, -0.160213f, 20.87252f, 3.10672f);
++                        t->AddNPCPassengerInInstance(NPC_GB_HIHG_CAPTAIN_JUSTIN_BARTLETT, 42.78902f, -0.010491f, 25.24052f, 3.00672f);
++                        t->AddNPCPassengerInInstance(NPC_GB_HIGH_OVERLORD_SAURFANG_NOT_VISUAL, -12.9806f, -22.9462f, 21.659f, 4.72416f);
++                        t->AddNPCPassengerInInstance(NPC_GB_ZAFOD_BOOMBOX, 18.8042f, 9.907914f, 20.33559f, 3.10672f);
++                        t->AddNPCPassengerInInstance(NPC_GB_SKYBREAKER_DECKHAND, -64.8423f, 4.4658f, 23.4352f, 2.698897f);
++                        t->AddNPCPassengerInInstance(NPC_GB_SKYBREAKER_DECKHAND, 35.54972f, 19.93269f, 25.0333f, 4.71242f);
++                        t->AddNPCPassengerInInstance(NPC_GB_SKYBREAKER_DECKHAND, -36.39837f, 3.13127f, 20.4496f, 1.5708f);
++                        t->AddNPCPassengerInInstance(NPC_GB_SKYBREAKER_DECKHAND, -36.23974f, -2.75767f, 20.4506f, 4.69496f);
++                        t->AddNPCPassengerInInstance(NPC_GB_SKYBREAKER_DECKHAND, 41.94677f, 44.08411f, 24.66587f, 1.62032f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 13.51547f, -0.160213f, 20.87252f, 3.10672f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 42.78902f, -0.010491f, 25.24052f, 3.00672f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 14.0551f, 3.65014f, 20.7935f, 3.16073f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 14.0551f, -4.65034f, 20.7915f, 3.04292f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, -17.8356f, 0.031688f, 20.823f, 4.73231f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, -34.2702f, -26.18966f, 21.37483f, 1.6f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, -11.64459f, -19.85176f, 20.88428f, 1.6f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, -19.88223f, -6.578763f, 20.57444f, 1.6f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, -41.4456f, -7.647498f, 20.49746f, 1.6f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 0.554884f, -1.232897f, 20.53705f, 1.6f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, -50.16516f, 9.716236f, 23.58709f, 1.6f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 11.45844f, 16.36624f, 20.54192f, 1.6f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 19.72286f, -2.193787f, 33.06982f, 1.6f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 19.72286f, -2.193787f, 33.06982f, 1.6f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 8.599396f, -28.55855f, 24.79919f, 1.6f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 38.94339f, -33.808f,  25.39618f, 1.6f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 58.15474f, 0.748094f, 41.87663f, 1.6f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 5.607554f, -6.350654f, 34.00357f, 1.6f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 4.780305f, -29.05227f, 35.09634f, 1.6f);
++
++                        if (instance->ToInstanceMap()->GetMaxPlayers() == 10)
++                        {
++                            t->AddNPCPassengerInInstance(NPC_GB_ALLIANCE_CANON, -5.15231f, -22.9462f, 21.659f, 4.72416f);
++                            t->AddNPCPassengerInInstance(NPC_GB_ALLIANCE_CANON, -28.0876f, -22.9462f, 21.659f, 4.72416f);
++                        }
++                        else
++                        {
++                            t->AddNPCPassengerInInstance(NPC_GB_ALLIANCE_CANON, -5.15231f, -22.9462f, 21.659f, 4.72416f);
++                            t->AddNPCPassengerInInstance(NPC_GB_ALLIANCE_CANON, -14.9806f, -22.9462f, 21.659f, 4.72416f);
++                            t->AddNPCPassengerInInstance(NPC_GB_ALLIANCE_CANON, -21.7406f, -22.9462f, 21.659f, 4.72416f);
++                            t->AddNPCPassengerInInstance(NPC_GB_ALLIANCE_CANON, -28.0876f, -22.9462f, 21.659f, 4.72416f);
++                        }
++                    }
++                }
++
++                if(TeamInInstance == HORDE)
++                {
++                    if(t = sMapMgr->LoadTransportInMap(instance, GO_THE_SKYBREAKER_HORDE_ICC, 77800))
++                    {
++                        t->AddNPCPassengerInInstance(NPC_GB_SKYBREAKER, -17.156807f, -1.633260f, 20.81273f, 4.52672f);
++                        t->AddNPCPassengerInInstance(NPC_GB_MURADIN_BRONZEBEARD, 13.51547f, -0.160213f, 20.87252f, 3.10672f);
++                        t->AddNPCPassengerInInstance(NPC_GB_HIHG_CAPTAIN_JUSTIN_BARTLETT, 42.78902f, -0.010491f, 25.24052f, 3.00672f);
++                        t->AddNPCPassengerInInstance(NPC_GB_SKYBREAKER_SORCERERS, 14.0551f, 3.65014f, 20.7935f, 3.16073f);
++                        t->AddNPCPassengerInInstance(NPC_GB_SKYBREAKER_SORCERERS, 14.0551f, -4.65034f, 20.7915f, 3.04292f);
++                        t->AddNPCPassengerInInstance(NPC_GB_SKYBREAKER_SORCERERS, -17.8356f, 0.031688f, 20.823f, 4.73231f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 13.51547f, -0.160213f, 20.87252f, 3.10672f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 42.78902f, -0.010491f, 25.24052f, 3.00672f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 14.0551f, 3.65014f, 20.7935f, 3.16073f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 14.0551f, -4.65034f, 20.7915f, 3.04292f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, -17.8356f, 0.031688f, 20.823f, 4.73231f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, -34.2702f, -26.18966f, 21.37483f, 1.6f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, -11.64459f, -19.85176f, 20.88428f, 1.6f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, -19.88223f, -6.578763f, 20.57444f, 1.6f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, -41.4456f, -7.647498f, 20.49746f, 1.6f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 0.554884f, -1.232897f, 20.53705f, 1.6f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, -50.16516f, 9.716236f, 23.58709f, 1.6f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 11.45844f, 16.36624f, 20.54192f, 1.6f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 19.72286f, -2.193787f, 33.06982f, 1.6f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 19.72286f, -2.193787f, 33.06982f, 1.6f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 8.599396f, -28.55855f, 24.79919f, 1.6f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 38.94339f, -33.808f,  25.39618f, 1.6f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 58.15474f, 0.748094f, 41.87663f, 1.6f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 5.607554f, -6.350654f, 34.00357f, 1.6f);
++                        t->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 4.780305f, -29.05227f, 35.09634f, 1.6f);
++
++                        if(instance->ToInstanceMap()->GetMaxPlayers() == 10)
++                        {
++                            t->AddNPCPassengerInInstance(NPC_GB_SKYBREAKER_RIFLEMAN, -5.15231f, -22.9462f, 21.659f, 4.72416f);
++                            t->AddNPCPassengerInInstance(NPC_GB_SKYBREAKER_RIFLEMAN, -14.9806f, -22.9462f, 21.659f, 4.72416f);
++                            t->AddNPCPassengerInInstance(NPC_GB_SKYBREAKER_RIFLEMAN, -21.7406f, -22.9462f, 21.659f, 4.72416f);
++                            t->AddNPCPassengerInInstance(NPC_GB_SKYBREAKER_RIFLEMAN, -28.0876f, -22.9462f, 21.659f, 4.72416f);
++                            t->AddNPCPassengerInInstance(NPC_GB_SKYBREAKER_MORTAR_SOLDIER, -8.61003f, 15.483f, 20.4158f, 4.69854f);
++                            t->AddNPCPassengerInInstance(NPC_GB_SKYBREAKER_MORTAR_SOLDIER, -27.9583f, 14.8875f, 20.4428f, 4.77865f);
++                        }
++                        else
++                        {
++                            t->AddNPCPassengerInInstance(NPC_GB_SKYBREAKER_RIFLEMAN, 0.15231f, -22.9462f, 21.659f, 4.72416f);
++                            t->AddNPCPassengerInInstance(NPC_GB_SKYBREAKER_RIFLEMAN, -5.15231f, -22.9462f, 21.659f, 4.72416f);
++                            t->AddNPCPassengerInInstance(NPC_GB_SKYBREAKER_RIFLEMAN, -14.9806f, -22.9462f, 21.659f, 4.72416f);
++                            t->AddNPCPassengerInInstance(NPC_GB_SKYBREAKER_RIFLEMAN, -21.7406f, -22.9462f, 21.659f, 4.72416f);
++                            t->AddNPCPassengerInInstance(NPC_GB_SKYBREAKER_RIFLEMAN, -28.0876f, -22.9462f, 21.659f, 4.72416f);
++                            t->AddNPCPassengerInInstance(NPC_GB_SKYBREAKER_RIFLEMAN, -33.0876f, -22.9462f, 21.659f, 4.72416f);
++                            t->AddNPCPassengerInInstance(NPC_GB_SKYBREAKER_MORTAR_SOLDIER, -8.61003f, 15.483f, 20.4158f, 4.69854f);
++                            t->AddNPCPassengerInInstance(NPC_GB_SKYBREAKER_MORTAR_SOLDIER, -27.9583f, 14.8875f, 20.4428f, 4.77865f);
++                            t->AddNPCPassengerInInstance(NPC_GB_SKYBREAKER_MORTAR_SOLDIER, -15.61003f, 15.483f, 20.4158f, 4.69854f);
++                            t->AddNPCPassengerInInstance(NPC_GB_SKYBREAKER_MORTAR_SOLDIER, -20.9583f, 14.8875f, 20.4428f, 4.77865f);
++                        }
++                    }
++                
++                    if(th = sMapMgr->LoadTransportInMap(instance,GO_ORGRIM_S_HAMMER_HORDE_ICC, 77800))
++                    {
++                        th->AddNPCPassengerInInstance(NPC_GB_ORGRIMS_HAMMER, 1.845810f, 1.268872f, 34.526218f, 1.5890f);
++                        th->AddNPCPassengerInInstance(NPC_GB_HIGH_OVERLORD_SAURFANG, 37.18615f, 0.00016f, 36.78849f, 3.13683f);
++                        th->AddNPCPassengerInInstance(NPC_GB_MURADIN_BRONZEBEARD_NOT_VISUAL, -7.09684f, 30.582f, 34.5013f, 1.53591f);
++                        th->AddNPCPassengerInInstance(NPC_GB_INVISIBLE_STALKER, 37.30764f, -0.143823f, 36.7936f, 3.13683f);
++                        th->AddNPCPassengerInInstance(NPC_GB_ZAFOD_BOOMBOX, 35.18615f, 15.30652f, 37.64343f, 3.05033f);
++                        th->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, -13.19547f, -27.160213f, 35.47252f, 3.10672f);
++                        th->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, -18.33902f, -25.230491f, 33.04052f, 3.00672f);
++                        th->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, -60.1251f, -1.27014f, 42.8335f, 5.16073f);
++                        th->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, -48.2651f, 16.78034f, 34.2515f, 0.04292f);
++                        th->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, -14.8356f, 27.931688f, 33.363f, 1.73231f);
++                        th->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 10.2702f, 20.62966f, 35.37483f, 1.6f);
++                        th->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 39.32459f, 14.50176f, 36.88428f, 1.6f);
++                        th->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 46.17223f, -6.638763f, 37.35444f, 1.32f);
++                        th->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 27.4456f, -13.397498f, 36.34746f, 1.6f);
++                        th->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, 18.16184f, 1.37897f, 35.31705f, 1.6f);
++                        th->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, -18.11516f, -0.196236f, 45.15709f, 2.9f);
++                        th->AddNPCPassengerInInstance(NPC_GB_GUNSHIP_HULL, -18.11844f, -0.19624f, 49.18192f, 1.6f);
++
++                        if(instance->ToInstanceMap()->GetMaxPlayers() == 10)
++                        {
++                            th->AddNPCPassengerInInstance(NPC_GB_HORDE_CANON, 22.6225f, 28.9309f, 36.3929f, 1.53591f);
++                            th->AddNPCPassengerInInstance(NPC_GB_HORDE_CANON, -21.7509f, 29.4207f, 34.2588f, 1.53591f);
++                        }
++                        else
++                        {
++                            th->AddNPCPassengerInInstance(NPC_GB_HORDE_CANON, 22.6225f, 28.9309f, 36.3929f, 1.53591f);
++                            th->AddNPCPassengerInInstance(NPC_GB_HORDE_CANON, 9.87745f, 30.5047f, 35.7147f, 1.53591f);
++                            th->AddNPCPassengerInInstance(NPC_GB_HORDE_CANON, -7.09684f, 30.582f, 34.5013f, 1.53591f);
++                            th->AddNPCPassengerInInstance(NPC_GB_HORDE_CANON, -21.7509f, 29.4207f, 34.2588f, 1.53591f);
++                        }
++                    }
++                }
++                isPrepared = true;
++                }
++                else
++                {
++                    sMapMgr->LoadTransportForPlayers(player);
++                }
++            }
+ 
+         protected:
+             EventMap Events;
+@@ -1309,6 +1594,25 @@ class instance_icecrown_citadel : public InstanceMapScript
+             bool IsOozeDanceEligible;
+             bool IsNauseaEligible;
+             bool IsOrbWhispererEligible;
++			bool isPrepared;
++            // Gunship: Variables
++            // Here we must add states and these things first squad with real events ls
++            uint32 FirstSquadState;
++            uint32 SecondSquadState;
++            uint32 SpireSquadState;
++            uint64 SkybreakerBossGUID;
++            uint64 OrgrimmarBossGUID;
++            uint64 DeathbringerSaurfangGbGUID;
++            uint64 MuradinBronzebeardGbGUID;
++            uint64 DeathbringerSaurfangNotVisualGUID;
++            uint64 MuradinBronzebeardNotVisualGUID;
++            uint64 GbBattleMageGUID;
++            uint64 GunShipControllerGUID;
++            uint64 GBMuradinGUID;
++            uint64 GBSaurfangGUID;
++            uint64 GBSkybreakerGUID;
++            uint64 GBOgrimsHammerGUID;
++            uint64 SindragosasWardGUID;
+         };
+ 
+         InstanceScript* GetInstanceScript(InstanceMap* map) const

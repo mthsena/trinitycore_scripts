@@ -1,0 +1,961 @@
+From d33285ce39653e0f8d22c7196fcd0663abb85a86 Mon Sep 17 00:00:00 2001
+From: Vstar <vstar0v0@hotmail.com>
+Date: Sun, 24 Nov 2013 08:50:52 +0800
+Subject: [Info] Now you can transfer all over the world!
+Subject: [Type] Function
+Subject: [From] Unknown
+Subject: [Work] Unknown
+Subject: [BUG] Unknown
+Subject: [Code] NO
+
+---
+ README.NPCTELEPORT                                |  14 +
+ sql/tools/world_npc_teleport.sql                  | 119 +++++++
+ src/server/game/AI/ScriptedAI/sc_npc_teleport.cpp | 366 ++++++++++++++++++++++
+ src/server/game/AI/ScriptedAI/sc_npc_teleport.h   | 138 ++++++++
+ src/server/game/Scripting/ScriptLoader.cpp        |   6 +-
+ src/server/game/Scripting/ScriptMgr.cpp           |   3 +
+ src/server/scripts/CMakeLists.txt                 |   3 +
+ src/server/scripts/Custom/npc_teleport.cpp        | 207 ++++++++++++
+ 8 files changed, 854 insertions(+), 2 deletions(-)
+ create mode 100644 README.NPCTELEPORT
+ create mode 100644 sql/tools/world_npc_teleport.sql
+ create mode 100644 src/server/game/AI/ScriptedAI/sc_npc_teleport.cpp
+ create mode 100644 src/server/game/AI/ScriptedAI/sc_npc_teleport.h
+ create mode 100644 src/server/scripts/Custom/npc_teleport.cpp
+
+diff --git a/README.NPCTELEPORT b/README.NPCTELEPORT
+new file mode 100644
+index 0000000..015c9c2
+--- /dev/null
++++ b/README.NPCTELEPORT
+@@ -0,0 +1,14 @@
++NPC Teleport for Trinity
++
++Original author : Wilibald09
++
++Allows you to add a custom NPC for teleporting, using .npc add 100000.
++The default NPC is entry 100000.
++
++All settings are located in the DB, so you can customize and add destinations,
++set level restrictions and also charge the player for teleporting.
++
++Installation:
++
++Run the query setup_npc_teleport.sql located in the trinity sql directory on
++your world DB. This will setup the DB and you can customize from there.
+diff --git a/sql/tools/world_npc_teleport.sql b/sql/tools/world_npc_teleport.sql
+new file mode 100644
+index 0000000..30ca713
+--- /dev/null
++++ b/sql/tools/world_npc_teleport.sql
+@@ -0,0 +1,119 @@
++DROP TABLE IF EXISTS `custom_npc_tele_category`;
++CREATE TABLE `custom_npc_tele_category` (
++  `id` int(6) unsigned NOT NULL default '0',
++  `name` varchar(255) NOT NULL default '',
++  `flag` tinyint(3) unsigned NOT NULL default '0',
++  `data0` bigint(20) unsigned NOT NULL default '0',
++  `data1` int(6) unsigned NOT NULL default '0',
++  PRIMARY KEY  (`id`)
++) ENGINE=MyISAM DEFAULT CHARSET=utf8;
++
++DROP TABLE IF EXISTS `custom_npc_tele_destination`;
++CREATE TABLE `custom_npc_tele_destination` (
++  `id` int(6) unsigned NOT NULL auto_increment,
++  `name` char(100) NOT NULL default '',
++  `pos_X` float NOT NULL default '0',
++  `pos_Y` float NOT NULL default '0',
++  `pos_Z` float NOT NULL default '0',
++  `map` smallint(5) unsigned NOT NULL default '0',
++  `orientation` float NOT NULL default '0',
++  `level` tinyint(3) unsigned NOT NULL default '0',
++  `cost` int(10) unsigned NOT NULL default '0',
++  PRIMARY KEY  (`id`)
++) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=utf8;
++
++DROP TABLE IF EXISTS `custom_npc_tele_association`;
++CREATE TABLE `custom_npc_tele_association` (
++  `cat_id` int(6) unsigned NOT NULL default '0',
++  `dest_id` int(6) unsigned NOT NULL default '0',
++  PRIMARY KEY  (`cat_id`, `dest_id`)
++) ENGINE=MyISAM DEFAULT CHARSET=utf8;
++
++TRUNCATE `custom_npc_tele_category`;
++INSERT INTO `custom_npc_tele_category`
++   (`id`, `name`, `flag`, `data0`, `data1`)
++VALUES
++   (1, 'Cities', 0, 1, 0),
++   (2, 'Cities', 0, 2, 0),
++   (3, 'Battlegrounds', 0, 1, 0),
++   (4, 'Battlegrounds', 0, 2, 0),
++   (5, 'Arenas', 0, 0, 0),
++   (6, '[Instances Lvl 1-60]', 0, 0, 0),
++   (7, '[Instances Lvl 60+]', 5, 60, 0),
++   (8, '[Instances Lvl 70+]', 5, 70, 0),
++   (9, 'Destinations MJ', 3, 0, 0);
++
++TRUNCATE `custom_npc_tele_destination`;
++INSERT INTO `custom_npc_tele_destination`
++   (`id`, `name`, `pos_X`, `pos_Y`, `pos_Z`, `map`, `orientation`, `level`, `cost`)
++VALUES
++   (1, 'Alterac Valley', 883.187, -489.375, 96.7618, 30, 3.06932, 0, 0),
++   (2, 'Alterac Valley', -818.155, -623.043, 54.0884, 30, 2.1, 0, 0),
++   (3, 'Arathi Basin', 686.053, 683.165, -12.9149, 529, 0.18, 0, 0),
++   (4, 'Arathi Basin', 1308.68, 1306.03, -9.0107, 529, 3.91285, 0, 0),
++   (5, 'Black Temple', -3610.72, 324.988, 37.4, 530, 3.28298, 0, 0),
++   (6, 'Blackfathom Deeps', 4254.58, 664.74, -29.04, 1, 1.97, 0, 0),
++   (7, 'Blackrock Depths', -7301.03, -913.19, 165.37, 0, 0.08, 0, 0),
++   (8, 'Blackrock Spire', -7535.43, -1212.04, 285.45, 0, 5.29, 0, 0),
++   (9, 'Blackwing Lair', -7665.55, -1102.49, 400.679, 469, 0, 0, 0),
++   (10, 'Caverns of Time', -8173.66, -4746.36, 33.8423, 1, 4.93989, 0, 0),
++   (11, 'Circle of Blood', 2839.44, 5930.17, 11.1002, 530, 3.16284, 0, 0),
++   (12, 'Coilfang Reservoir', 517.288, 6976.28, 32.0072, 530, 0, 0, 0),
++   (13, 'Darnassus', 9947.52, 2482.73, 1316.21, 1, 0, 0, 0),
++   (14, 'Dire Maul', -3982.47, 1127.79, 161.02, 1, 0.05, 0, 0),
++   (15, 'Exodar', -4073.03, -12020.4, -1.47, 530, 0, 0, 0),
++   (16, 'Eye of the Storm', 2487.72, 1609.12, 1224.64, 566, 3.35671, 0, 0),
++   (17, 'Eye of the Storm', 1843.73, 1529.77, 1224.43, 566, 0.297579, 0, 0),
++   (18, 'Goldshire', -9464, 62, 56, 0, 0, 0, 0),
++   (19, 'Gruul\'s Lair', 3539.01, 5082.36, 1.69107, 530, 0, 0, 0),
++   (20, 'Gurubashi', -13261.3, 168.294, 35.0792, 0, 1.00688, 0, 0),
++   (21, 'Hellfire Citadel', -305.816, 3056.4, -2.47318, 530, 2.01, 0, 0),
++   (22, 'Ironforge', -4924.07, -951.95, 501.55, 0, 5.4, 0, 0),
++   (23, 'Isle Of Quel\'Danas', 12947.4, -6893.31, 5.68398, 530, 3.09154, 0, 0),
++   (24, 'Karazhan', -11118.8, -2010.84, 47.0807, 0, 0, 0, 0),
++   (25, 'Maraudon', -1433.33, 2955.34, 96.21, 1, 4.82, 0, 0),
++   (26, 'Molten Core', 1121.45, -454.317, -101.33, 230, 3.5, 0, 0),
++   (27, 'Naxxramas', 3125.18, -3748.02, 136.049, 0, 0, 0, 0),
++   (28, 'Onyxia\'s Lair', -4707.44, -3726.82, 54.6723, 1, 3.8, 0, 0),
++   (29, 'Orgrimmar', 1552.5, -4420.66, 8.94802, 1, 0, 0, 0),
++   (30, 'Razor Hill', 315.721, -4743.4, 10.4867, 1, 0, 0, 0),
++   (31, 'Razorfen Downs', -4645.08, -2470.85, 85.53, 1, 4.39, 0, 0),
++   (32, 'Razorfen Kraul', -4484.04, -1739.4, 86.47, 1, 1.23, 0, 0),
++   (33, 'Ring of Trials', -1999.94, 6581.71, 11.32, 530, 2.3, 0, 0),
++   (34, 'Ruins of Ahn\'Qiraj', -8409.03, 1498.83, 27.3615, 1, 2.49757, 0, 0),
++   (35, 'Scholomance', 1219.01, -2604.66, 85.61, 0, 0.5, 0, 0),
++   (36, 'Shadowfang Keep', -254.47, 1524.68, 76.89, 0, 1.56, 0, 0),
++   (37, 'Shattrath City', -1850.21, 5435.82, -10.9614, 530, 3.40391, 0, 0),
++   (38, 'Silvermoon', 9338.74, -7277.27, 13.7895, 530, 0, 0, 0),
++   (39, 'Stormwind', -8960.14, 516.266, 96.3568, 0, 0, 0, 0),
++   (40, 'Stratholme', 3263.54, -3379.46, 143.59, 0, 0, 0, 0),
++   (41, 'Tempest Keep', 3089.58, 1399.05, 187.653, 530, 4.79407, 0, 0),
++   (42, 'Temple of Ahn\'Qiraj', -8245.84, 1983.74, 129.072, 1, 0.936195, 0, 0),
++   (43, 'The Deadmines', -11212, 1658.58, 25.67, 0, 1.45, 0, 0),
++   (44, 'The Maul', -3761.49, 1133.43, 132.083, 1, 4.57259, 0, 0),
++   (45, 'The Scarlet Monastery', 2843.89, -693.74, 139.32, 0, 5.11, 0, 0),
++   (46, 'The Sunken Temple', -10346.9, -3851.9, -43.41, 0, 6.09, 0, 0),
++   (47, 'The Wailing Caverns', -722.53, -2226.3, 16.94, 1, 2.71, 0, 0),
++   (48, 'Thunder Bluff', -1290, 147.034, 129.682, 1, 4.919, 0, 0),
++   (49, 'Uldaman', -6119.7, -2957.3, 204.11, 0, 0.03, 0, 0),
++   (50, 'Undercity', 1819.71, 238.79, 60.5321, 0, 0, 0, 0),
++   (51, 'Warsong Gulch', 930.851, 1431.57, 345.537, 489, 0.015704, 0, 0),
++   (52, 'Warsong Gulch', 1525.95, 1481.66, 352.001, 489, 3.20756, 0, 0),
++   (53, 'Zul\'Aman', 6846.95, -7954.5, 170.028, 530, 4.61501, 0, 0),
++   (54, 'Zul\'Farrak', -6839.39, -2911.03, 8.87, 1, 0.41, 0, 0),
++   (55, 'Zul\'Gurub', -11916.7, -1212.82, 92.2868, 0, 4.6095, 0, 0),
++   (56, 'Ile des MJ', 16254, 16276.9, 14.5082, 1, 1.70269, 0, 0);
++
++TRUNCATE `custom_npc_tele_association`;
++INSERT INTO `custom_npc_tele_association`
++  (`cat_id`, `dest_id`)
++VALUES
++  (1, 13), (1, 15), (1, 18), (1, 22), (1, 23), (1, 37), (1, 39), (2, 23), (2, 29), (2, 30), (2, 37), (2, 38), (2, 48), (2, 50), (3, 1), (3, 4), (3, 16), (3, 52), (4, 2), (4, 3), (4, 17), (4, 51), (5, 11), (5, 20), (5, 33), (5, 44), (6, 6), (6, 7), (6, 8), (6, 14), (6, 25), (6, 31), (6, 32), (6, 35), (6, 36), (6, 40), (6, 43), (6, 45), (6, 46), (6, 47), (6, 49), (6, 54), (7, 9), (7, 26), (7, 27), (7, 28), (7, 34), (7, 42), (7, 55), (8, 5), (8, 10), (8, 12), (8, 19), (8, 21), (8, 24), (8, 41), (8, 53), (9, 56);
++
++-- `npc_text`
++REPLACE INTO `npc_text` (`ID`, `text0_0`) VALUES
++   (100000, 'Choose your Category.'),
++   (100001, 'Choose your Destination.');
++
++-- `creature_template`
++INSERT INTO `creature_template` VALUES (100000, 0, 0, 0, 0, 0, 26502, 0, 0, 0, 'Abisal Vortex', '', '', 0, 83, 83, 0, 35, 35, 1, 1, 1.14286, 2, 1, 509, 683, 0, 805, 1, 0, 0, 1, 0, 2048, 0, 0, 0, 0, 0, 0, 371, 535, 135, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '', 0, 3, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 2, 'npc_teleport', 1);
+diff --git a/src/server/game/AI/ScriptedAI/sc_npc_teleport.cpp b/src/server/game/AI/ScriptedAI/sc_npc_teleport.cpp
+new file mode 100644
+index 0000000..47b957b
+--- /dev/null
++++ b/src/server/game/AI/ScriptedAI/sc_npc_teleport.cpp
+@@ -0,0 +1,366 @@
++#include "ScriptPCH.h"
++#include "sc_npc_teleport.h"
++//#include "ProgressBar.h"
++
++#define TELE    nsNpcTel::CatDest
++#define PAGE    nsNpcTel::Page
++#define PAGEI   PAGE::Instance
++
++
++nsNpcTel::VCatDest nsNpcTel::TabCatDest;
++
++
++uint32 PAGE::operator [] (Player * const player) const
++{
++	for (VInst_t i(0); i < m_TabInstance.size(); ++i)
++	{
++		if (m_TabInstance[i].GetPlayer() == player)
++			return m_TabInstance[i].GetPageId();
++	}
++	return 0;
++}
++
++PAGE::Instance & PAGE::operator () (Player * const player)
++{
++	for (VInst_t i(0); i < m_TabInstance.size(); ++i)
++	{
++		if (m_TabInstance[i].GetPlayer() == player)
++			return m_TabInstance[i];
++	}
++	m_TabInstance.push_back(Instance(player));
++	return m_TabInstance.back();
++}
++
++PAGE::Instance & PAGEI::operator = (const uint32 &id)
++{
++	m_PageId = id;
++	return *this;
++}
++
++PAGE::Instance & PAGEI::operator ++ (void)
++{
++	++m_PageId;
++	return *this;
++}
++
++PAGE::Instance PAGEI::operator ++ (int32)
++{
++	Instance tmp (*this);
++	++m_PageId;
++	return tmp;
++}
++
++PAGE::Instance & PAGEI::operator -- (void)
++{
++	--m_PageId;
++	return *this;
++}
++
++PAGE::Instance PAGEI::operator -- (int32)
++{
++	Instance tmp (*this);
++	--m_PageId;
++	return tmp;
++}
++
++TELE::CatDest(const uint32 &id, const std::string &name,
++			  const Flag &flag, const uint64 &data0, const uint32 &data1)
++			  : m_id(id), m_name(name), m_flag(flag), m_data0(data0), m_data1(data1)
++{
++	m_TabDest.clear();
++}
++
++std::string TELE::GetName(const bool IsGM /* = false */) const
++{
++	if (!IsGM || m_flag != FLAG_TEAM)
++		return m_name;
++
++	switch (m_data0)
++	{
++	case TEAM_HORDE:      return std::string(m_name + " (H)");
++	case TEAM_ALLIANCE:   return std::string(m_name + " (A)");
++	}
++	return m_name;
++}
++
++bool TELE::IsAllowedToTeleport(Player * const player) const
++{
++	if (player->IsGameMaster())
++	{
++		if (m_flag == FLAG_GMLEVEL)
++			return player->GetSession()->GetSecurity() >= m_data0;
++		return true;
++	}
++
++	switch (m_flag)
++	{
++	case FLAG_TEAM:
++		switch (m_data0)
++		{
++		case TEAM_HORDE:      return player->GetTeam() == HORDE;
++		case TEAM_ALLIANCE:   return player->GetTeam() == ALLIANCE;
++		case TEAM_ALL:        return true;
++		}
++
++	case FLAG_GUILD:
++		return player->GetGuildId() == m_data0;
++
++	case FLAG_GMLEVEL:
++		return player->GetSession()->GetSecurity() >= m_data0;
++
++	case FLAG_ISGM:
++		return player->IsGameMaster();
++
++	case FLAG_ACCOUNT:
++		return player->GetSession()->GetAccountId() == m_data0;
++
++	case FLAG_LEVEL:
++		return player->getLevel() >= m_data0;
++
++	case FLAG_ITEM:
++		return player->HasItemCount(m_data0, m_data1, true);
++
++	case FLAG_QUEST:
++		if (m_data1 < MAX_QUEST_STATUS)
++			return player->GetQuestStatus(m_data0) == m_data1;
++		return player->GetQuestRewardStatus(m_data0);
++
++	case FLAG_GENDER:
++		return player->getGender() == m_data0;
++
++	case FLAG_RACE:
++		return player->getRace() == m_data0;
++
++	case FLAG_CLASS:
++		return player->getClass() == m_data0;
++
++	case FLAG_REPUTATION:
++		return player->GetReputationRank(m_data0) >= m_data1;
++
++	case FLAG_PLAYER:
++		return player->GetGUID() == m_data0;
++
++	default: TC_LOG_ERROR("misc", "Invalid flag (category: %u). Important problem...", GetCatID());
++	}
++
++	TC_LOG_ERROR("misc", "Invalid flag (category: %u). Important problem...", GetCatID());
++	return false;
++}
++
++uint32 TELE::CountOfCategoryAllowedBy(Player * const player)
++{
++	uint32 count (0);
++	for (VCatDest_t i(0); i < TabCatDest.size(); ++i)
++	{
++		if (TabCatDest[i].IsAllowedToTeleport(player))
++			++count;
++	}
++	return count;
++}
++
++bool nsNpcTel::IsValidData(const uint32 &cat,   const Flag &flag,
++						   const uint64 &data0, const uint32 &data1)
++{
++	switch(flag)
++	{
++	case FLAG_TEAM:
++		if (data1)
++			TC_LOG_ERROR("misc", "Invalid data1 (category: %u).", cat);
++		if (data0 < MAX_FLAG_TEAM)
++			return true;
++		TC_LOG_ERROR("misc", "Invalid data0 (Team) (category: %u).", cat);
++		return false;
++
++	case FLAG_GUILD:
++		if (data1)
++			TC_LOG_ERROR("misc", "Invalid data1 (category: %u).", cat);
++		if (data0)
++			return true;
++		TC_LOG_ERROR("misc", "Invalid data0 (GuildID) (category: %u).", cat);
++		return false;
++
++	case FLAG_GMLEVEL:
++		if (data1)
++			TC_LOG_ERROR("misc", "Invalid data1 (category: %u).", cat);
++		if (0 < data0 && data0 < 256)
++			return true;
++		TC_LOG_ERROR("misc", "Invalid data0 (GmLevel) (category: %u).", cat);
++		return false;
++
++	case FLAG_ISGM:
++		if (data0)
++			TC_LOG_ERROR("misc", "Invalid data0 (category: %u).", cat);
++		if (data1)
++			TC_LOG_ERROR("misc", "Invalid data1 (category: %u).", cat);
++		return true;
++
++	case FLAG_ACCOUNT:
++		if (data1)
++			TC_LOG_ERROR("misc", "Invalid data1 (category: %u).", cat);
++		if (data0)
++			return true;
++		TC_LOG_ERROR("misc", "Invalid data0 (AccountID) (category: %u).", cat);
++		return false;
++
++	case FLAG_LEVEL:
++		if (data1)
++			TC_LOG_ERROR("misc", "Invalid data1 (category: %u).", cat);
++		if (0 < data0 && data0 < 256)
++			return true;
++		TC_LOG_ERROR("misc", "Invalid data0 (Level) (category: %u).", cat);
++		return false;
++
++	case FLAG_ITEM:
++		if (!data0)
++		{
++			TC_LOG_ERROR("misc", "Invalid data0 (ItemID) (category: %u).", cat);
++			return false;
++		}
++		if (data1)
++			return true;
++		TC_LOG_ERROR("misc", "Invalid data1 (Item Count) (category: %u).", cat);
++		return false;
++
++	case FLAG_QUEST:
++		if (!data0)
++		{
++			TC_LOG_ERROR("misc", "Invalid data0 (QuestID) (category: %u).", cat);
++			return false;
++		}
++		if (data1 < MAX_QUEST_STATUS + 1)
++			return true;
++		TC_LOG_ERROR("misc", "Invalid data1 (Quest Status) (category: %u).", cat);
++		return false;
++
++	case FLAG_GENDER:
++		if (data1)
++			TC_LOG_ERROR("misc", "Invalid data1 (category: %u).", cat);
++		if (data0 < GENDER_NONE)
++			return true;
++		TC_LOG_ERROR("misc", "Invalid data0 (Gender) (category: %u).", cat);
++		return false;
++
++	case FLAG_RACE:
++		if (data1)
++			TC_LOG_ERROR("misc", "Invalid data1 (category: %u).", cat);
++		if (0 < data0 && data0 < MAX_RACES)
++			return true;
++		TC_LOG_ERROR("misc", "Invalid data0 (Race) (category: %u).", cat);
++		return false;
++
++	case FLAG_CLASS:
++		if (data1)
++			TC_LOG_ERROR("misc", "Invalid data1 (category: %u).", cat);
++		if (0 < data0 && data0 < MAX_CLASSES)
++			return true;
++		TC_LOG_ERROR("misc", "Invalid data0 (Class) (category: %u).", cat);
++		return false;
++
++	case FLAG_REPUTATION:
++		if (!data0)
++		{
++			TC_LOG_ERROR("misc", "Invalid data0 (Faction/Reputation) (category: %u).", cat);
++			return false;
++		}
++		if (data1 <= REP_EXALTED)
++			return true;
++		TC_LOG_ERROR("misc", "Invalid data1 (Faction/Reputation) (category: %u).", cat);
++		return false;
++
++	case FLAG_PLAYER:
++		if (data1)
++			TC_LOG_ERROR("misc", "Invalid data1 (category: %u).", cat);
++		if (data0)
++			return true;
++		TC_LOG_ERROR("misc", "Invalid data0 (PlayerGuid) (category: %u).", cat);
++		return false;
++
++	default: TC_LOG_ERROR("misc", "Invalid flag (category: %u).", cat);
++	}
++
++	TC_LOG_ERROR("misc", "Invalid flag (category: %u).", cat);
++	return false;
++}
++
++void LoadNpcTele(void)
++{
++	const char *Table[] =
++	{
++		"custom_npc_tele_category",
++		"custom_npc_tele_destination",
++		"custom_npc_tele_association",
++	};
++
++
++	QueryResult result = WorldDatabase.PQuery(
++		"SELECT `flag`, `data0`, `data1`, `cat_id`, C.`name` `namecat`, D.`name` `namedest`, "
++		//      0        1        2        3                  4                   5
++		"`pos_X`, `pos_Y`, `pos_Z`, `orientation`, `map`, `level`, `cost` "
++		//      6        7        8        9              10     11       12
++		"FROM `%s` C, `%s` D, `%s` A "
++		"WHERE C.`id` = `cat_id` AND D.`id` = `dest_id` "
++		"ORDER BY `namecat`, `cat_id`, `namedest`", Table[0], Table[1], Table[2]);
++
++	nsNpcTel::TabCatDest.clear();
++
++	if (result)
++	{
++		TC_LOG_INFO("server.loading", "Loading %s, %s and %s...", Table[0], Table[1], Table[2]);
++		// barGoLink bar(result->GetRowCount());
++
++		uint32 catid = 0;
++		uint32 nbDest = 0;
++		bool IsValidCat = true;
++		bool FirstTime = true;
++
++		do
++		{
++			// bar.step();
++			Field *fields = result->Fetch();
++
++			if (!IsValidCat && catid == fields[3].GetUInt32() && !FirstTime)
++				continue;
++
++			IsValidCat = true;
++			FirstTime = false;
++
++			if (!nsNpcTel::IsValidData(fields[3].GetUInt32(), (nsNpcTel::Flag)fields[0].GetUInt8(),
++				fields[1].GetUInt64(), fields[2].GetUInt32()))
++			{
++				IsValidCat = false;
++				catid = fields[3].GetUInt32();
++				continue;
++			}
++
++			if (catid != fields[3].GetUInt32())
++			{
++				catid = fields[3].GetUInt32();
++				nsNpcTel::CatDest categorie (catid, fields[4].GetString(), (nsNpcTel::Flag)fields[0].GetUInt8(),
++					fields[1].GetUInt64(), fields[2].GetUInt32());
++				nsNpcTel::TabCatDest.push_back(categorie);
++			}
++
++			nsNpcTel::Dest item =
++			{
++				fields[5].GetString(),   // Name
++				fields[6].GetFloat(),       // X
++				fields[7].GetFloat(),       // Y
++				fields[8].GetFloat(),       // Z
++				fields[9].GetFloat(),       // Orientation
++				fields[10].GetUInt16(),     // Map
++				fields[11].GetUInt8(),      // Level
++				fields[12].GetUInt32(),     // Cost
++			};
++
++			nsNpcTel::TabCatDest.back().AddDest(item);
++			++nbDest;
++		} while (result->NextRow());
++
++		TC_LOG_INFO("server.loading", " ");
++		TC_LOG_INFO("server.loading", "Loaded %u npc_teleport.", nbDest);
++	} else TC_LOG_ERROR("misc", "WARNING >> Loaded 0 npc_teleport.");
++}
++
++#undef TELE
++#undef PAGE
++#undef PAGEI
+diff --git a/src/server/game/AI/ScriptedAI/sc_npc_teleport.h b/src/server/game/AI/ScriptedAI/sc_npc_teleport.h
+new file mode 100644
+index 0000000..d116c2a
+--- /dev/null
++++ b/src/server/game/AI/ScriptedAI/sc_npc_teleport.h
+@@ -0,0 +1,138 @@
++#ifndef SC_NPC_TELEPORT_H
++#define SC_NPC_TELEPORT_H
++
++#include <vector>
++
++
++namespace nsNpcTel
++{
++	// Different types of permissions
++	enum Flag
++	{
++		FLAG_TEAM       = 0,
++		FLAG_GUILD      = 1,
++		FLAG_GMLEVEL    = 2,
++		FLAG_ISGM       = 3,
++		FLAG_ACCOUNT    = 4,
++		FLAG_LEVEL      = 5,
++		FLAG_ITEM       = 6,
++		FLAG_QUEST      = 7,
++		FLAG_GENDER     = 8,
++		FLAG_RACE       = 9,
++		FLAG_CLASS      = 10,
++		FLAG_REPUTATION = 11,
++		FLAG_PLAYER     = 12,
++		MAX_FLAG,
++	};
++
++	// Different parameters of FLAG_TEAM
++	enum
++	{
++		TEAM_ALL        = 0,
++		TEAM_ALLIANCE   = 1,
++		TEAM_HORDE      = 2,
++		MAX_FLAG_TEAM,
++	};
++
++	// Structure representing the destinations
++	struct Dest
++	{
++		std::string m_name;
++		float       m_X, m_Y, m_Z, m_orient;
++		uint16      m_map;
++		uint8       m_level;
++		uint32      m_cost;
++	};
++
++	// Class representing the categories of destinations
++	class CatDest
++	{
++	public:
++
++		typedef std::vector<Dest> VDest;
++		typedef VDest::size_type  VDest_t;
++
++		CatDest(const uint32 &id, const std::string &name,
++			const Flag &flag, const uint64 &data0, const uint32 &data1);
++
++		void   AddDest  (const Dest &item)       { m_TabDest.push_back(item); }
++		Dest   GetDest  (const uint32 &id) const { return m_TabDest[id]; }
++		uint32 GetCatID (void)             const { return m_id; }
++		uint32 size     (void)             const { return m_TabDest.size(); }
++
++		std::string GetName(const bool IsGM = false)    const;
++		bool IsAllowedToTeleport(Player * const player) const;
++
++		static uint32 CountOfCategoryAllowedBy(Player * const player);
++
++	private:
++
++		uint32      m_id;
++		std::string m_name;
++		Flag        m_flag;
++		uint64      m_data0;
++		uint32      m_data1;
++		VDest       m_TabDest;
++	};
++
++	// Class page for current player
++	class Page
++	{
++	protected:
++
++		// Class instance for current player
++		class Instance
++		{
++		public:
++
++			Instance(Player * const player, const uint32 &PageId = 0)
++				: m_player(player), m_PageId(PageId) {}
++
++			Instance & operator =  (const uint32 &id);
++			Instance & operator ++ (void);
++			Instance   operator ++ (int32);
++			Instance & operator -- (void);
++			Instance   operator -- (int32);
++
++			uint32   GetPageId(void) const { return m_PageId; }
++			Player * GetPlayer(void) const { return m_player; }
++
++		private:
++
++			Player *m_player;
++			uint32  m_PageId;
++		};
++
++
++	public:
++
++		typedef std::vector<Instance> VInst;
++		typedef VInst::size_type      VInst_t;
++
++		Page(void) { m_TabInstance.clear(); }
++
++		Instance &   operator () (Player * const player);
++		uint32 operator [] (Player * const player) const;
++
++
++	private:
++
++		VInst m_TabInstance;
++	};
++
++	typedef std::vector <CatDest> VCatDest;
++	typedef VCatDest::size_type   VCatDest_t;
++
++	// Verification of data integrity
++	bool IsValidData(const uint32 &cat,   const Flag &flag,
++		const uint64 &data0, const uint32 &data1);
++
++	extern VCatDest TabCatDest;
++}
++
++// Loading contents of database
++void LoadNpcTele(void);
++
++extern WorldDatabaseWorkerPool WorldDatabase;
++
++#endif
+\ No newline at end of file
+diff --git a/src/server/game/Scripting/ScriptLoader.cpp b/src/server/game/Scripting/ScriptLoader.cpp
+index 28fe883..4a3762a 100644
+--- a/src/server/game/Scripting/ScriptLoader.cpp
++++ b/src/server/game/Scripting/ScriptLoader.cpp
+@@ -1426,13 +1426,15 @@ void AddBattlegroundScripts()
+ 
+ #ifdef SCRIPTS
+ /* This is where custom scripts' loading functions should be declared. */
+-
++//TeleNPC2
++void AddSC_npc_teleport();
+ #endif
+ 
+ void AddCustomScripts()
+ {
+ #ifdef SCRIPTS
+     /* This is where custom scripts should be added. */
+-
++    //TeleNPC2
++    AddSC_npc_teleport();
+ #endif
+ }
+diff --git a/src/server/game/Scripting/ScriptMgr.cpp b/src/server/game/Scripting/ScriptMgr.cpp
+index 3674f8f..7910544 100644
+--- a/src/server/game/Scripting/ScriptMgr.cpp
++++ b/src/server/game/Scripting/ScriptMgr.cpp
+@@ -23,6 +23,7 @@
+ #include "ObjectMgr.h"
+ #include "OutdoorPvPMgr.h"
+ #include "ScriptLoader.h"
++#include "sc_npc_teleport.h"
+ #include "ScriptSystem.h"
+ #include "Transport.h"
+ #include "Vehicle.h"
+@@ -185,6 +186,8 @@ void ScriptMgr::Initialize()
+     uint32 oldMSTime = getMSTime();
+ 
+     LoadDatabase();
++       // Load TeleNPC2 - maybe not the best place to load it ...
++       LoadNpcTele();
+ 
+     TC_LOG_INFO("server.loading", "Loading C++ scripts");
+ 
+diff --git a/src/server/scripts/CMakeLists.txt b/src/server/scripts/CMakeLists.txt
+index 5be634d..dbd2f1b 100644
+--- a/src/server/scripts/CMakeLists.txt
++++ b/src/server/scripts/CMakeLists.txt
+@@ -24,6 +24,9 @@ include(Examples/CMakeLists.txt)
+ 
+ set(scripts_STAT_SRCS
+   ${scripts_STAT_SRCS}
++  Custom/npc_teleport.cpp
++  ../game/AI/ScriptedAI/sc_npc_teleport.cpp
++  ../game/AI/ScriptedAI/sc_npc_teleport.h
+   ../game/AI/ScriptedAI/ScriptedEscortAI.cpp
+   ../game/AI/ScriptedAI/ScriptedCreature.cpp
+   ../game/AI/ScriptedAI/ScriptedFollowerAI.cpp
+diff --git a/src/server/scripts/Custom/npc_teleport.cpp b/src/server/scripts/Custom/npc_teleport.cpp
+new file mode 100644
+index 0000000..49eaaae
+--- /dev/null
++++ b/src/server/scripts/Custom/npc_teleport.cpp
+@@ -0,0 +1,207 @@
++#include "ScriptPCH.h"
++#include "sc_npc_teleport.h"
++#include <sstream>
++
++#define GOSSIP_SHOW_DEST        1000
++#define GOSSIP_TELEPORT         1001
++#define GOSSIP_NEXT_PAGEC       1002
++#define GOSSIP_PREV_PAGEC       1003
++#define GOSSIP_NEXT_PAGED       1004
++#define GOSSIP_PREV_PAGED       1005
++#define GOSSIP_MAIN_MENU        1006
++
++#define SPELL_ID_PASSIVE_RESURRECTION_SICKNESS  15007
++#define SPELL_VISUAL_TELEPORT   35517
++
++#define NB_ITEM_PAGE            15
++#define MSG_CAT                 100000
++#define MSG_DEST                100001
++
++#define NEXT_PAGE               "-> [Next Page]"
++#define PREV_PAGE               "<- [Previous Page]"
++#define MAIN_MENU               "<= [Main Menu]"
++
++
++using namespace nsNpcTel;
++
++
++namespace
++{
++	Page PageC, PageD;
++	Page Cat;
++
++	// Conversion function int->string
++	std::string ConvertStr(const int64 &val)
++	{
++		std::ostringstream ostr;
++		ostr << val;
++		return ostr.str();
++	}
++
++	// Conversion function intMoney->stringMoney
++	std::string ConvertMoney(const uint32 &Money)
++	{
++		std::string Str(ConvertStr(Money));
++		uint32 SizeStr = Str.length();
++
++		if (SizeStr > 4)
++			Str = Str.insert(Str.length()-4, "po");
++		if (SizeStr > 2)
++			Str = Str.insert(Str.length()-2, "pa");
++		Str += "pc";
++
++		return Str;
++	}
++
++	// Teleport Player
++	void Teleport(Player * const player, const uint16 &map,
++		const float &X, const float &Y, const float &Z, const float &orient)
++	{
++		player->CastSpell(player, SPELL_VISUAL_TELEPORT, true);
++		player->TeleportTo(map, X, Y, Z, orient);
++	}
++
++	// Display categories
++	void AffichCat(Player * const player, Creature * const creature)
++	{
++		if (PageC[player] > 0)
++			player->ADD_GOSSIP_ITEM(7, PREV_PAGE, GOSSIP_PREV_PAGEC, 0);
++
++		VCatDest_t i (PageC[player] * NB_ITEM_PAGE);
++		for ( ; i < TabCatDest.size() && i < (NB_ITEM_PAGE * (PageC[player] + 1)); ++i)
++		{
++			if (TabCatDest[i].IsAllowedToTeleport(player))
++				player->ADD_GOSSIP_ITEM(7, TabCatDest[i].GetName(player->IsGameMaster()).c_str(), GOSSIP_SHOW_DEST, i);
++		}
++
++		if (i < TabCatDest.size())
++			player->ADD_GOSSIP_ITEM(7, NEXT_PAGE, GOSSIP_NEXT_PAGEC, 0);
++
++		player->SEND_GOSSIP_MENU(MSG_CAT, creature->GetGUID());
++	}
++
++	// Display destination categories
++	void AffichDest(Player * const player, Creature * const creature)
++	{
++		if (PageD[player] > 0)
++			player->ADD_GOSSIP_ITEM(7, PREV_PAGE, GOSSIP_PREV_PAGED, 0);
++
++		CatDest::VDest_t i (PageD[player] * NB_ITEM_PAGE);
++		for ( ; i < TabCatDest[Cat[player]].size() && i < (NB_ITEM_PAGE * (PageD[player] + 1)); ++i)
++		{
++			player->ADD_GOSSIP_ITEM(5, TabCatDest[Cat[player]].GetDest(i).m_name.c_str(), GOSSIP_TELEPORT, i);
++		}
++
++		if (i < TabCatDest[Cat[player]].size())
++			player->ADD_GOSSIP_ITEM(7, NEXT_PAGE, GOSSIP_NEXT_PAGED, 0);
++
++		if (CatDest::CountOfCategoryAllowedBy(player) > 1)
++			player->ADD_GOSSIP_ITEM(7, MAIN_MENU, GOSSIP_MAIN_MENU, 0);
++
++		player->SEND_GOSSIP_MENU(MSG_DEST, creature->GetGUID());
++	}
++
++	// Verification before teleportation
++	void ActionTeleport(Player * const player, Creature * const creature, const uint32 &id)
++	{
++		Dest dest (TabCatDest[Cat[player]].GetDest(id));
++
++		if (player->getLevel() < dest.m_level && !player->IsGameMaster())
++		{
++			std::string msg ("You do not have the required level. This destination requires level " + ConvertStr(dest.m_level) + ".");
++			creature->MonsterWhisper(msg.c_str(), player->GetGUID());
++			return;
++		}
++
++		if (player->GetMoney() < dest.m_cost && !player->IsGameMaster())
++		{
++			std::string msg ("You do not have enough money. The price for teleportation is " + ConvertMoney(dest.m_cost) + ".");
++			creature->MonsterWhisper(msg.c_str(), player->GetGUID());
++			return;
++		}
++
++		if (!player->IsGameMaster() && dest.m_cost)
++			player->ModifyMoney(-1 * dest.m_cost);
++
++		Teleport(player, dest.m_map, dest.m_X, dest.m_Y, dest.m_Z, dest.m_orient);
++	}
++}
++
++class npc_teleport : public CreatureScript
++{
++public:
++	npc_teleport() : CreatureScript("npc_teleport") {}
++
++	bool OnGossipHello(Player *player, Creature *creature)
++	{
++		PageC(player) = PageD(player) = Cat(player) = 0;
++
++		if(player->IsInCombat())
++		{
++			player->CLOSE_GOSSIP_MENU();
++			creature->MonsterWhisper("You are in combat. Come back later", player->GetGUID());
++			return true;
++		}
++		AffichCat(player, creature);
++		return true;
++	}
++
++	bool OnGossipSelect(Player *player, Creature *creature, uint32 sender, uint32 param)
++	{
++		player->PlayerTalkClass->ClearMenus();
++		switch(sender)
++		{
++			// Display destinations
++		case GOSSIP_SHOW_DEST:
++			Cat(player) = param;
++			AffichDest(player, creature);
++			break;
++
++			// Previous categories page
++		case GOSSIP_PREV_PAGEC:
++			--PageC(player);
++			AffichCat(player, creature);
++			break;
++
++			// Next page categories
++		case GOSSIP_NEXT_PAGEC:
++			++PageC(player);
++			AffichCat(player, creature);
++			break;
++
++			// Previous destinations page
++		case GOSSIP_PREV_PAGED:
++			--PageD(player);
++			AffichDest(player, creature);
++			break;
++
++			// Next destination page
++		case GOSSIP_NEXT_PAGED:
++			++PageD(player);
++			AffichDest(player, creature);
++			break;
++
++			// Display main menu
++		case GOSSIP_MAIN_MENU:
++			OnGossipHello(player, creature);
++			break;
++
++			// Teleportation
++		case GOSSIP_TELEPORT:
++			player->CLOSE_GOSSIP_MENU();
++			if(player->HasAura(SPELL_ID_PASSIVE_RESURRECTION_SICKNESS,0)) {
++				creature->CastSpell(player,38588,false); // Healing effect
++				player->RemoveAurasDueToSpell(SPELL_ID_PASSIVE_RESURRECTION_SICKNESS);
++			}
++
++			ActionTeleport(player, creature, param);
++			break;
++		}
++		return true;
++	}
++};
++
++void AddSC_npc_teleport()
++{
++	new npc_teleport;
++}
+-- 
+1.8.3.msysgit.0
+

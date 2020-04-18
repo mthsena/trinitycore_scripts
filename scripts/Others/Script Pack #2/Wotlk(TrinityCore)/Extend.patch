@@ -1,0 +1,33 @@
+From f3f122c64aab135b1cf6fda3863d9c775442bb6e Mon Sep 17 00:00:00 2001
+From: Vstar <vstar0v0@hotmail.com>
+Date: Tue, 17 Dec 2013 22:56:53 +0800
+Subject: [Info] Easy to extend
+Subject: [Type] Function
+Subject: [From] Nothing
+Subject: [Work] 100%
+Subject: [BUG] NO
+Subject: [Code] NO
+
+---
+ src/server/scripts/Custom/CMakeLists.txt | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/src/server/scripts/Custom/CMakeLists.txt b/src/server/scripts/Custom/CMakeLists.txt
+index 99cf026..9477ca5 100644
+--- a/src/server/scripts/Custom/CMakeLists.txt
++++ b/src/server/scripts/Custom/CMakeLists.txt
+@@ -8,8 +8,11 @@
+ # WITHOUT ANY WARRANTY, to the extent permitted by law; without even the
+ # implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ 
++file(GLOB_RECURSE sources_Custom Custom/*.cpp Custom/*.h)
++
+ set(scripts_STAT_SRCS
+   ${scripts_STAT_SRCS}
++  ${sources_Custom}
+ )
+ 
+ message("  -> Prepared: Custom")
+-- 
+1.8.3.msysgit.0
+

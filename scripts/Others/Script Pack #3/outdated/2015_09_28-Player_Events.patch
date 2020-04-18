@@ -1,0 +1,992 @@
+From 510d1009e92ee4c567c17ddf973c334432d2d900 Mon Sep 17 00:00:00 2001
+From: LordPsyan <realmsofwarcraft@gmail.com>
+Date: Mon, 28 Sep 2015 09:40:34 -0500
+Subject: [PATCH] 2015_09_28-Player_Events
+
+---
+ event_readme.txt                                   |  208 +++++++
+ .../Player_Events/world.player_events.sql          |   75 +++
+ src/server/game/Scripting/ScriptLoader.cpp         |    6 +-
+ src/server/scripts/Custom/event.cpp                |  647 ++++++++++++++++++++
+ 4 files changed, 934 insertions(+), 2 deletions(-)
+ create mode 100644 event_readme.txt
+ create mode 100644 sql/TrinityCore-Patches/Player_Events/world.player_events.sql
+ create mode 100644 src/server/scripts/Custom/event.cpp
+
+diff --git a/event_readme.txt b/event_readme.txt
+new file mode 100644
+index 0000000..f323938
+--- /dev/null
++++ b/event_readme.txt
+@@ -0,0 +1,208 @@
++#### EventID:
++```
++Only used for debugging purposes
++.onevent test ID
++```
++
++#### ConditionType:
++```
++Table: conditions
++Column: SourceTypeOrReferenceId
++
++Read how condition system works, or keep on 0
++```
++
++#### ConditionEntry:
++```
++Table: conditions
++Column: SourceEntry
++```
++
++#### GameEventEntry:
++```
++Table: game_event
++Column: eventEntry
++If you enter a number here, the event & action will not be performed unless the event with specificed ID is running.
++```
++
++#### Eventtype:
++|Event               | ID | Explanation                         |
++|--------------------|----|-------------------------------------|
++|PEVENT_LEVELUP      | 1  | Run action if player levels up      |
++|PEVENT_KILLCREATURE | 2  | Run action if player kills creature |
++|PEVENT_CREATUREKILL | 3  | Run action if creature kills player |
++|PEVENT_DUELSTART    | 5  | Run action on duel start            |
++|PEVENT_DUELEND      | 6  | Run action on duel end              |
++|PEVENT_DUELWIN      | 7  | Run action on duel win              |
++|PEVENT_DUELLOSS     | 8  | Run action on duel loss             |
++|PEVENT_ONSPELLCAST  | 9  | Run action on spellcast             |
++|PEVENT_ONLOGIN      | 10 | Run action on login                 |
++|PEVENT_ONLOGOUT     | 11 | Run action on logout                |
++|PEVENT_NEWZONE      | 12 | Run action when entering new zone   |
++|PEVENT_FIRSTLOGIN   | 13 | Run action on first login           |
++
++#### Here's what eventvalue means for different eventtypes:
++
++PEVENT_LEVELUP:
++```
++What level you reached
++```
++PEVENT_KILLCREATURE:
++```
++Id of creature you killed
++```
++PEVENT_CREATUREKILL:
++```
++Id of creature who killed you
++```
++PEVENT_DUELSTART, PEVENT_DUELEND, PEVENT_DUELWIN, PEVENT_DUELLOSS:
++```
++DuelCompleteType:
++DUEL_INTERRUPTED = 0 (/forfeit etc..)
++DUEL_WON         = 1
++DUEL_FLED        = 2 (Ran away from duel)
++```
++PEVENT_ONSPELLCAST:
++```
++Id of spell being casted
++```
++PEVENT_ONLOGIN, PEVENT_ONLOGOUT:
++```
++Absolutely nothing
++```
++PEVENT_NEWZONE:
++```
++Id of new zone entered!
++```
++
++NOTE: Eventvalue 0 will accept any spellid, creatureid etc...
++
++#### Level: The level when the action will occur
++#### Class: The class ID of the class this should happen to (0 means all)
++
++
++|Class       | ID|
++|------------|---|
++|WARRIOR     | 1 |
++|PALADIN     | 2 |
++|HUNTER      | 3 |
++|ROGUE       | 4 |
++|PRIEST      | 5 |
++|DEATH_KNIGHT| 6 |
++|SHAMAN      | 7 |
++|MAGE        | 8 |
++|WARLOCK     | 9 |
++|DRUID       | 11|
++
++#### Race: The Race ID of the Race this should happen to (0 means all)
++
++|Race     | ID|
++|---------|---|
++|HUMAN    | 1 |
++|ORC      | 2 |
++|DWARF    | 3 |
++|NIGHTELF | 4 |
++|UNDEAD   | 5 |
++|TAUREN   | 6 |
++|GNOME    | 7 |
++|TROLL    | 8 |
++|BLOODELF | 10|
++|DRAENEI  | 11|
++
++#### Action: The action id
++
++|Action            | ID |
++|------------------|----|
++|ACTION_MODMONEY   | 1  |
++|ACTION_GIVEITEM   | 2  |
++|ACTION_CASTSPELL  | 3  |
++|ACTION_LEARNSPELL | 4  |
++|ACTION_TELEPORT   | 5  |
++|ACTION_TEMPSUMMON | 6  |
++|ACTION_SETHEALTH  | 7  |
++|ACTION_SETPOWER   | 8  |
++|ACTION_ADDTITLE   | 9  |
++|ACTION_GIVEXP     | 10 |
++|ACTION_ADDITEMSET | 11 |
++
++
++#### Here's what valueA - valueE means for different actions:
++
++###### ACTION_MODMONEY:
++```
++valueA = Amount of copper to give to player
++```
++
++###### ACTION_GIVEITEM:
++```
++valueA = ItemID
++valueB = How many to give
++```
++
++###### ACTION_CASTSPELL:
++```
++valueA = Spell to cast on player
++```
++
++###### ACTION_LEARNSPELL:
++```
++valueA = Spell to learn to player
++```
++
++###### ACTION_TELEPORT:
++```
++valueA = mapid
++valueB = x
++valueC = y
++valueD = z
++valueE = orientation
++```
++
++###### ACTION_TEMPSUMMON:
++```
++valueA = CreatureID
++valueB = TempSummonType* (I would say use 3, it's safe.)
++valueC = DespawnTime (milliseconds)
++```
++
++ACTION_SETHEALTH
++```
++valueA = % of health to set on player
++valueB = If more then 0 it affects pets as well.
++```
++ACTION_SETPOWER
++```
++valueA = % of power to set on player
++valueB = If more then 0 it affects pets as well.
++```
++ACTION_ADDTITLE
++```
++valueA = TitleID
++```
++ACTION_GIVEXP
++```
++valueA = Amount of XP
++```
++ACTION_ADDITEMSET
++```
++valueA = Itemset ID
++```
++*
++
++|TempSummonType                         | ID | Explanation                                                         |
++|---------------------------------------|----|---------------------------------------------------------------------|
++|TEMPSUMMON_TIMED_OR_DEAD_DESPAWN       | 1  | despawns after a specified time OR when the creature disappears     |
++|TEMPSUMMON_TIMED_OR_CORPSE_DESPAWN     | 2  | despawns after a specified time OR when the creature dies           |
++|TEMPSUMMON_TIMED_DESPAWN               | 3  | despawns after a specified time                                     |
++|TEMPSUMMON_TIMED_DESPAWN_OUT_OF_COMBAT | 4  | despawns after a specified time after the creature is out of combat |
++|TEMPSUMMON_CORPSE_DESPAWN              | 5  | despawns instantly after death                                      |
++|TEMPSUMMON_CORPSE_TIMED_DESPAWN        | 6  | despawns after a specified time after death                         |
++|TEMPSUMMON_DEAD_DESPAWN                | 7  | despawns when the creature disappears                               |
++|TEMPSUMMON_MANUAL_DESPAWN              | 8  | despawns when UnSummon() is called                                  |
++
++
++#### Message
++```
++A message that will be sent along with the reward.
++If message contains the text CODEMSG message will be overriden by a hardcoded message with reward text.
++```
+\ No newline at end of file
+diff --git a/sql/TrinityCore-Patches/Player_Events/world.player_events.sql b/sql/TrinityCore-Patches/Player_Events/world.player_events.sql
+new file mode 100644
+index 0000000..1e76146
+--- /dev/null
++++ b/sql/TrinityCore-Patches/Player_Events/world.player_events.sql
+@@ -0,0 +1,75 @@
++/*
++Navicat MySQL Data Transfer
++
++Source Server         : Local
++Source Server Version : 50612
++Source Host           : localhost:3306
++Source Database       : tc_world
++
++Target Server Type    : MYSQL
++Target Server Version : 50612
++File Encoding         : 65001
++
++Date: 2014-07-11 05:24:41
++*/
++
++SET FOREIGN_KEY_CHECKS=0;
++
++-- ----------------------------
++-- Table structure for lil_actions
++-- ----------------------------
++DROP TABLE IF EXISTS `lil_actions`;
++CREATE TABLE `lil_actions` (
++  `id` int(10) unsigned NOT NULL,
++  `type` int(10) DEFAULT '0',
++  `avalue0` float DEFAULT '0',
++  `avalue1` float DEFAULT '0',
++  `avalue2` float DEFAULT '0',
++  `avalue3` float DEFAULT '0',
++  `avalue4` float DEFAULT '0',
++  `message` varchar(255) DEFAULT NULL,
++  PRIMARY KEY (`id`)
++) ENGINE=InnoDB DEFAULT CHARSET=latin1;
++
++-- ----------------------------
++-- Records of lil_actions
++-- ----------------------------
++INSERT INTO `lil_actions` VALUES ('1', '1', '10000', '0', '0', '0', '0', 'CODEMSG');
++
++-- ----------------------------
++-- Table structure for lil_conditions
++-- ----------------------------
++DROP TABLE IF EXISTS `lil_conditions`;
++CREATE TABLE `lil_conditions` (
++  `id` int(10) unsigned NOT NULL,
++  `TCConditionType` int(10) DEFAULT '0',
++  `TCConditionEntry` int(10) DEFAULT '0',
++  `TCGameEventEntry` int(10) DEFAULT '0',
++  `PRace` int(1) DEFAULT '0',
++  `PClass` int(1) DEFAULT '0',
++  `CValue` int(10) DEFAULT '0',
++  PRIMARY KEY (`id`)
++) ENGINE=InnoDB DEFAULT CHARSET=latin1;
++
++-- ----------------------------
++-- Records of lil_conditions
++-- ----------------------------
++INSERT INTO `lil_conditions` VALUES ('1', '0', '0', '0', '0', '0', '0');
++
++-- ----------------------------
++-- Table structure for lil_events
++-- ----------------------------
++DROP TABLE IF EXISTS `lil_events`;
++CREATE TABLE `lil_events` (
++  `id` int(10) unsigned NOT NULL,
++  `type` int(10) DEFAULT '0',
++  `condition` int(10) DEFAULT '0',
++  `action` int(10) DEFAULT '0',
++  PRIMARY KEY (`id`)
++) ENGINE=InnoDB DEFAULT CHARSET=latin1;
++
++-- ----------------------------
++-- Records of lil_events
++-- ----------------------------
++INSERT INTO `lil_events` VALUES ('0', '0', '0', '0');
++INSERT INTO `lil_events` VALUES ('1', '1', '1', '1');
+diff --git a/src/server/game/Scripting/ScriptLoader.cpp b/src/server/game/Scripting/ScriptLoader.cpp
+index 7e5f73a..59164b5 100644
+--- a/src/server/game/Scripting/ScriptLoader.cpp
++++ b/src/server/game/Scripting/ScriptLoader.cpp
+@@ -1455,7 +1455,8 @@ void AddBattlegroundScripts()
+ // start38
+ // start39
+ // start40
+-// start41
++// Events
++void AddSC_LevelEvents();
+ // start42
+ // start43
+ // start44
+@@ -1581,7 +1582,8 @@ void AddCustomScripts()
+ // end38
+ // end39
+ // end40
+-// end41
++    // Events
++    AddSC_LevelEvents();
+ // end42
+ // end43
+ // end44
+diff --git a/src/server/scripts/Custom/event.cpp b/src/server/scripts/Custom/event.cpp
+new file mode 100644
+index 0000000..e53680f
+--- /dev/null
++++ b/src/server/scripts/Custom/event.cpp
+@@ -0,0 +1,647 @@
++#include "Pet.h"
++#include <mutex>
++#include "Chat.h"
++
++#define LILDEBUG
++
++void LilDebug(std::string str, uint32 line)
++{
++#ifdef LILDEBUG
++    std::cout << "Line: " << line << " " << str << std::endl;
++#endif
++}
++
++#define LILLOG(x) LilDebug(x, __LINE__)
++
++namespace Lil
++{
++    enum
++    {
++        LEVENT_NONE,
++        LEVENT_LEVELUP,
++        LEVENT_KILLCREATURE,
++        LEVENT_CREATUREKILL,
++        LEVENT_DUELSTART,
++        LEVENT_DUELEND,
++        LEVENT_DUELWIN,
++        LEVENT_DUELLOSS,
++        LEVENT_ONSPELLCAST,
++        LEVENT_ONLOGIN,
++        LEVENT_ONLOGOUT,
++        LEVENT_NEWZONE,
++        LEVENT_FIRSTLOGIN,
++        LEVENT_MAX,
++    };
++
++    enum
++    {
++        LACTION_NONE,
++        LACTION_MODMONEY,
++        LACTION_GIVEITEM,
++        LACTION_CASTSPELL,
++        LACTION_LEARNSPELL,
++        LACTION_TELEPORT,
++        LACTION_TEMPSUMMON,
++        LACTION_SETHEALTH,
++        LACTION_SETPOWER,
++        LACTION_ADDTITLE,
++        LACTION_GIVEXP,
++        LACTION_ADDITEMSET,
++        LACTION_MAX,
++    };
++
++    std::string MoneyString(uint32 incopper)
++    {
++        uint32 gold = incopper / 10000;
++        incopper -= gold * 10000;
++        uint32 silver = incopper / 100;
++        incopper -= silver * 100;
++        uint32 copper = incopper;
++
++        std::ostringstream ss;
++
++        if (gold)
++            ss << gold << " Gold";
++        if (gold && silver)
++            ss << ", ";
++        if (silver)
++            ss << silver << " Silver";
++        if (silver && copper)
++            ss << ", ";
++        if (copper)
++            ss << copper << " Copper";
++
++        if (!gold && !silver && !copper)
++            ss << "NAH!";
++
++        // #Lovestreams!
++
++        return ss.str();
++    }
++
++    std::string GetItemLink(uint32 itemid)
++    {
++        auto item = sObjectMgr->GetItemTemplate(itemid);
++        if (!itemid)
++            return "ITEM DOESN'T EXIST";
++
++        std::ostringstream ss;
++        std::string color = "cffffffff";
++
++        switch (item->Quality)
++        {
++        case 0:
++            color = "cff9d9d9d";
++            break;
++        case 1:
++            color = "cffffffff";
++            break;
++        case 2:
++            color = "cff1eff00";
++            break;
++        case 3:
++            color = "cff0070dd";
++            break;
++        case 4:
++            color = "cffa335ee";
++            break;
++        case 5:
++            color = "cffff8000";
++            break;
++        case 6:
++        case 7:
++            color = "cffe6cc80";
++            break;
++        default:
++            break;
++        }
++
++        ss << "|" << color << "| Hitem:" << item->ItemId << " : 0 : 0 : 0 : 0 : 0 : 0 : 0 : 0 | h[" << item->Name1 << "] | h | r";
++
++        return ss.str();
++
++        //| cffffffff | Hitem:%d : 0 : 0 : 0 : 0 : 0 : 0 : 0 : 0 | h[%s] | h | r
++    }
++
++    std::string GetSpellLink(uint32 spellid)
++    {
++        auto spell = sSpellStore.LookupEntry(spellid);
++        if (!spell)
++            return "SPELL NOT FOUND";
++
++        std::ostringstream ss;
++
++        ss << spell->Id << " - |cffffffff|Hspell:" << spell->Id << "|h[" << spell->SpellName << "]|h|r";
++
++        return ss.str();
++    }
++}
++
++
++class LilCondition
++{
++public:
++    bool ConditionMet(Player* pPlayer, uint32 etype, uint32 evalue)
++    {
++        if (CValue != evalue && CValue != 0)
++        {
++            LILLOG("Condition Failed! EventCondition value invalid");
++            return false;
++        }
++
++        if (pPlayer->getRace() != PRace && PRace != 0)
++        {
++            LILLOG("Condition Failed! Wrong race");
++            return false;
++        }
++
++        if (pPlayer->getClass() != PClass && PClass != 0)
++        {
++            LILLOG("Condition Failed! Wrong class");
++            return false;
++        }
++
++        if (TCConditionType && TCConditionEntry)
++        {
++            auto list = sConditionMgr->GetConditionsForNotGroupedEntry(ConditionSourceType(TCConditionType), TCConditionEntry);
++
++            if (!sConditionMgr->IsObjectMeetToConditions(pPlayer, list))
++            {
++                LILLOG("Condition Failed! TC Condition not met");
++                return false;
++            }
++        }
++
++        if (TCGameEventEntry)
++        {
++            auto activeEvents = sGameEventMgr->GetActiveEventList();
++
++            if (activeEvents.find(TCGameEventEntry) == activeEvents.end())
++            {
++                LILLOG("Condition Failed! Game event not running");
++                return false;
++            }
++        }
++
++        LILLOG("Condition OK!");
++
++        return true;
++    }
++
++    uint32 id;
++    uint32 TCConditionType;
++    uint32 TCConditionEntry;
++    uint16 TCGameEventEntry;
++    uint8 PRace;
++    uint8 PClass;
++    uint32 CValue;
++};
++
++class LilEvent
++{
++public:
++    uint32 id;
++    uint32 type;
++    uint32 condition;
++    uint32 action;
++};
++
++class LilAction
++{
++public:
++    void PerformAction(Player* pPlayer)
++    {
++        bool codemsg = message.find("CODEMSG") != std::string::npos;
++
++        ChatHandler handler = ChatHandler(pPlayer->GetSession());
++
++        switch (type)
++        {
++        case Lil::LACTION_MODMONEY:
++        {
++                                      pPlayer->ModifyMoney(int32(avalue[0]));
++                                      if (codemsg && avalue[0] >= 1)
++                                          handler.PSendSysMessage("You received %s", Lil::MoneyString(uint32(avalue[0])).c_str());
++        }
++            break;
++
++        case Lil::LACTION_GIVEITEM:
++        {
++                                      if (avalue[0] < 1 || avalue[1] < 1)
++                                          return;
++
++                                      if (auto item = sObjectMgr->GetItemTemplate(uint32(avalue[0])))
++                                      {
++                                          pPlayer->StoreNewItemInBestSlots(item->ItemId, uint32(avalue[1]));
++
++                                          if (codemsg)
++                                              handler.PSendSysMessage("You were rewarded with %s", Lil::GetItemLink(item->ItemId).c_str());
++                                      }
++        }
++            break;
++
++        case Lil::LACTION_CASTSPELL:
++        {
++                                       if (avalue[0] < 1)
++                                           return;
++
++                                       auto spell = sSpellStore.LookupEntry(uint32(avalue[0]));
++                                       if (!spell)
++                                           return;
++
++                                       pPlayer->CastSpell(pPlayer, spell->Id, true);
++                                       if (codemsg)
++                                           handler.PSendSysMessage("%s was caster on you!", Lil::GetSpellLink(spell->Id).c_str());
++        }
++            break;
++
++        case Lil::LACTION_LEARNSPELL:
++        {
++                                        if (avalue[0] < 1)
++                                            return;
++
++                                        pPlayer->LearnSpell(uint32(avalue[0]), false);
++        }
++            break;
++
++        case Lil::LACTION_TELEPORT:
++        {
++                                      if (avalue[0] < 0)
++                                          return;
++
++                                      pPlayer->TeleportTo(uint32(avalue[0]), avalue[1], avalue[2], avalue[3], Position::NormalizeOrientation(avalue[4]));
++
++                                      if (codemsg)
++                                      {
++                                          auto area = sAreaStore.LookupEntry(pPlayer->GetAreaId());
++                                          //handler.PSendSysMessage("You have been teleported to %s", area->area_name);
++                                      }
++        }
++            break;
++
++        case Lil::LACTION_TEMPSUMMON:
++        {
++                                        if (avalue[0] < 0 || avalue[1] < 0 || avalue[2] < 0)
++                                            return;
++
++                                        auto creature = sObjectMgr->GetCreatureTemplate(uint32(avalue[0]));
++                                        if (!creature)
++                                            return;
++
++                                        Position pos;
++                                        pos.m_positionX = pPlayer->GetPositionX();
++                                        pos.m_positionY = pPlayer->GetPositionY();
++                                        pos.m_positionZ = pPlayer->GetPositionZ();
++                                        pos.m_orientation = pPlayer->GetOrientation();
++
++                                        pPlayer->SummonCreature(creature->Entry, pos, TempSummonType(uint32(avalue[1])), uint32(avalue[2]));
++
++                                        if (codemsg)
++                                            handler.PSendSysMessage("You have summoned %s!", creature->Name.c_str());
++        }
++        case Lil::LACTION_SETHEALTH:
++        {
++                                       pPlayer->SetHealth(float(pPlayer->GetHealth()) * (avalue[0] / 100.f));
++                                       if (Pet* pPet = pPlayer->GetPet())
++                                       if (avalue[1] > 0)
++                                           pPet->SetHealth(float(pPet->GetHealth()) * (avalue[0] / 100.f));
++
++                                       if (codemsg)
++                                           handler.PSendSysMessage("Your health was set to %u", pPlayer->GetHealth());
++
++        }
++            break;
++
++        case Lil::LACTION_SETPOWER:
++        {
++                                      pPlayer->SetPower(pPlayer->getPowerType(), pPlayer->GetPower(pPlayer->getPowerType()) * (avalue[0] / 100.f));
++                                      if (Pet* pPet = pPlayer->GetPet())
++                                      if (avalue[1] > 0)
++                                          pPet->SetPower(pPet->getPowerType(), pPet->GetPower(pPet->getPowerType()) * (avalue[0] / 100.f));
++
++                                      if (codemsg)
++                                      {
++                                          std::string powername = "power";
++
++                                          switch (pPlayer->getPowerType())
++                                          {
++                                          case POWER_MANA:
++                                              powername = "mana";
++                                              break;
++                                          case POWER_RAGE:
++                                              powername = "rage";
++                                              break;
++                                          case POWER_ENERGY:
++                                              powername = "energy";
++                                              break;
++                                          case POWER_RUNIC_POWER:
++                                              powername = "runic power";
++                                              break;
++                                          default:
++                                              break;
++                                          }
++
++                                          handler.PSendSysMessage("Your %s has been set to %u", powername.c_str(), pPlayer->GetPower(pPlayer->getPowerType()));
++                                      }
++        }
++            break;
++
++        case Lil::LACTION_ADDTITLE:
++        {
++                                      CharTitlesEntry const* title = sCharTitlesStore.LookupEntry(uint32(avalue[0]));
++                                      if (!title)
++                                          return;
++
++                                      pPlayer->SetTitle(title);
++
++                                      if (codemsg){}
++                                          //handler.PSendSysMessage("You were awarded with |Htitle:id|h[name]|h!", title->ID, (pPlayer->getGender() == GENDER_MALE ? title->nameMale : title->nameFemale));
++        }
++            break;
++
++        case Lil::LACTION_GIVEXP:
++        {
++                                    if (avalue[0] < 1)
++                                        return;
++
++                                    pPlayer->GiveXP(uint32(avalue[0]), NULL);
++
++                                    if (codemsg)
++                                        handler.PSendSysMessage("%u experience was given to you!", uint32(avalue[0]));
++        }
++            break;
++
++        case Lil::LACTION_ADDITEMSET:
++        {
++                                        auto set = sItemSetStore.LookupEntry(uint32(avalue[0]));
++                                        if (!set)
++                                            return;
++
++                                        for (auto i = 0; i < 10; ++i)
++                                        if (auto item = sObjectMgr->GetItemTemplate(set->itemId[i]))
++                                            pPlayer->StoreNewItemInBestSlots(item->ItemId, 1);
++
++                                        if (codemsg){}
++                                            //handler.PSendSysMessage("You have been rewarded with itemset |Hitemset:%u|h[%s]|h", uint32(avalue[0]), set->name);
++        }
++            break;
++
++        default:
++            break;
++        }
++
++        if (!message.empty() && !codemsg)
++            handler.PSendSysMessage("%s", message.c_str());
++    }
++
++    uint32 id;
++    uint32 type;
++    float avalue[5];
++    std::string message;
++};
++
++std::mutex LilMTX;
++
++class LilEvents
++{
++public:
++    static LilEvents* Instance()
++    {
++        static LilEvents instance;
++        return &instance;
++    }
++
++    void HandleEvent(Player* pPlayer, uint32 etype, uint32 evalue)
++    {
++        std::ostringstream ss;
++        ss << "HandleEvent: etype: " << etype << " evalue: " << evalue;
++
++        LILLOG(ss.str().c_str());
++
++        for (auto& i : m_Events) // Loop all events
++        if (i.type == etype) // Find event with this type
++        if (m_Conditions.find(i.condition)->second.ConditionMet(pPlayer, etype, evalue)) // Check if we fullful all conditions
++            m_Actions.find(i.action)->second.PerformAction(pPlayer); // Perform the action
++    }
++
++    void ForceAction(Player* pPlayer, uint32 id)
++    {
++        if (m_Actions.find(id) != m_Actions.end())
++            m_Actions.find(id)->second.PerformAction(pPlayer);
++        else
++            ChatHandler(pPlayer->GetSession()).PSendSysMessage("Event with specified id doesn't exist.");
++    }
++
++    void LoadEvents()
++    {
++        m_Events.clear();
++        m_Actions.clear();
++        m_Conditions.clear();
++
++        auto result1 = WorldDatabase.PQuery("SELECT * FROM lil_events");
++        if (!result1)
++            return;
++
++        do
++        {
++            auto fields = result1->Fetch();
++            LilEvent curevent;
++            curevent.id         = fields[0].GetUInt32();
++            curevent.type       = fields[1].GetUInt32();
++            curevent.condition  = fields[2].GetUInt32();
++            curevent.action     = fields[3].GetUInt32();
++
++            m_Events.push_back(curevent);
++        } while (result1->NextRow());
++
++        auto result2 = WorldDatabase.PQuery("SELECT * FROM lil_actions");
++        if (!result2)
++            return;
++
++        do
++        {
++            auto fields = result2->Fetch();
++            LilAction curaction;
++            curaction.id        = fields[0].GetUInt32();
++            curaction.type      = fields[1].GetUInt32();
++            curaction.avalue[0] = fields[2].GetFloat();
++            curaction.avalue[1] = fields[3].GetFloat();
++            curaction.avalue[2] = fields[4].GetFloat();
++            curaction.avalue[3] = fields[5].GetFloat();
++            curaction.avalue[4] = fields[6].GetFloat();
++            curaction.message   = fields[7].GetString();
++
++            m_Actions.insert(std::make_pair(curaction.id, curaction));
++        } while (result2->NextRow());
++
++        auto result3 = WorldDatabase.PQuery("SELECT * FROM lil_conditions");
++        if (!result3)
++            return;
++
++        do
++        {
++            auto fields = result3->Fetch();
++            LilCondition curcondition;
++            curcondition.id                 = fields[0].GetUInt32();
++            curcondition.TCConditionType    = fields[1].GetUInt32();
++            curcondition.TCConditionEntry   = fields[2].GetUInt32();
++            curcondition.TCGameEventEntry   = fields[3].GetUInt32();
++            curcondition.PRace              = fields[4].GetUInt8();
++            curcondition.PClass             = fields[5].GetUInt8();
++            curcondition.CValue             = fields[6].GetUInt32();
++
++            m_Conditions.insert(std::make_pair(curcondition.id, curcondition));
++        } while (result3->NextRow());
++
++        bool removedentry = true;
++
++        while (removedentry) // This will be useful when i add conditions stacking, loop useless for now.
++        {
++            removedentry = false;
++
++            for (auto itr = m_Events.begin(); itr != m_Events.end();)
++            {
++                if (m_Actions.find(itr->action) == m_Actions.end() ||
++                    m_Conditions.find(itr->condition) == m_Conditions.end())
++                {
++                    removedentry = true;
++                    itr = m_Events.erase(itr);
++                }
++                else
++                    ++itr;
++            }
++        }
++
++        TC_LOG_INFO("server.loading", "Loaded %u Lilevent events", m_Events.size());
++        TC_LOG_INFO("server.loading", "Loaded %u Lilevent actions", m_Actions.size());
++        TC_LOG_INFO("server.loading", "Loaded %u Lilevent conditions", m_Conditions.size());
++    }
++
++private:
++    std::vector<LilEvent> m_Events;
++    std::unordered_map<uint32, LilAction> m_Actions;
++    std::unordered_map<uint32, LilCondition> m_Conditions;
++};
++
++#define sLilEvents LilEvents::Instance()
++
++
++class PlayerEvents : public PlayerScript
++{
++public:
++    PlayerEvents() : PlayerScript("PlayerEvents") { }
++
++    void OnLevelChanged(Player* pPlayer, uint8)
++    {
++        sLilEvents->HandleEvent(pPlayer, Lil::LEVENT_LEVELUP, pPlayer->getLevel());
++    }
++
++    void OnCreatureKill(Player* pPlayer, Creature* pCreature)
++    {
++        sLilEvents->HandleEvent(pPlayer, Lil::LEVENT_KILLCREATURE, pCreature->GetEntry());
++    }
++
++    void OnPlayerKilledByCreature(Creature* pCreature, Player* pPlayer)
++    {
++        sLilEvents->HandleEvent(pPlayer, Lil::LEVENT_CREATUREKILL, pCreature->GetEntry());
++    }
++
++    void OnDuelStart(Player* pPlayer1, Player* pPlayer2)
++    {
++        sLilEvents->HandleEvent(pPlayer1, Lil::LEVENT_DUELSTART, 0);
++        sLilEvents->HandleEvent(pPlayer2, Lil::LEVENT_DUELSTART, 0);
++    }
++
++    void OnDuelEnd(Player* pWinner, Player* pLoser, DuelCompleteType type)
++    {
++        sLilEvents->HandleEvent(pWinner, Lil::LEVENT_DUELEND, type);
++        sLilEvents->HandleEvent(pLoser, Lil::LEVENT_DUELEND, type);
++
++        sLilEvents->HandleEvent(pWinner, Lil::LEVENT_DUELWIN, type);
++        sLilEvents->HandleEvent(pLoser, Lil::LEVENT_DUELLOSS, type);
++    }
++
++    void OnSpellCast(Player* pPlayer, Spell* pSpell, bool)
++    {
++        sLilEvents->HandleEvent(pPlayer, Lil::LEVENT_ONSPELLCAST, pSpell->GetSpellInfo()->Id);
++    }
++
++    void OnLogin(Player* pPlayer, bool firstlogin)
++    {
++        if (firstlogin)
++            sLilEvents->HandleEvent(pPlayer, Lil::LEVENT_FIRSTLOGIN, 0);
++        else
++            sLilEvents->HandleEvent(pPlayer, Lil::LEVENT_ONLOGIN, 0);
++    }
++
++    void OnLogout(Player* pPlayer)
++    {
++        sLilEvents->HandleEvent(pPlayer, Lil::LEVENT_ONLOGOUT, 0);
++    }
++
++    void OnUpdateZone(Player* pPlayer, uint32 newzone, uint32)
++    {
++        sLilEvents->HandleEvent(pPlayer, Lil::LEVENT_NEWZONE, newzone);
++    }
++};
++
++class EventLoader : public WorldScript
++{
++public:
++    EventLoader() : WorldScript("EventLoader") { }
++
++    void OnStartup()
++    {
++        sLilEvents->LoadEvents();
++    }
++};
++
++class EventCommands : public CommandScript
++{
++public:
++    EventCommands() : CommandScript("EventCommands") { }
++
++    ChatCommand* GetCommands() const override
++    {
++        static ChatCommand eventCommandTable[] =
++        {
++            { "reload", rbac::RBAC_PERM_COMMAND_RELOAD_GAME_TELE, true,  &HandleReloadLevelEvents, "", NULL },
++            { "test",   rbac::RBAC_PERM_COMMAND_RELOAD_GAME_TELE, false, &HandleTestAction       , "", NULL },
++            { NULL, 0, false, NULL, "", NULL }
++        };
++
++        static ChatCommand commandTable[] =
++        {
++            { "onevent", rbac::RBAC_PERM_COMMAND_RELOAD_GAME_TELE, false, NULL, "", eventCommandTable },
++            { NULL, 0, false, NULL, "", NULL }
++        };
++        return commandTable;
++    }
++
++    static bool HandleReloadLevelEvents(ChatHandler* handler, const char*)
++    {
++        sLilEvents->LoadEvents();
++        handler->PSendSysMessage("onlevelup reloaded");
++
++        return true;
++    }
++
++    static bool HandleTestAction(ChatHandler* handler, const char* args)
++    {
++        uint32 ID = atoi(args);
++        if (!ID)
++            return false;
++
++        sLilEvents->ForceAction(handler->GetSession()->GetPlayer(), ID);
++
++        return true;
++    }
++};
++
++
++void AddSC_LevelEvents()
++{
++    new PlayerEvents;
++    new EventLoader;
++    new EventCommands;
++}
+\ No newline at end of file
+-- 
+1.7.10.4
+

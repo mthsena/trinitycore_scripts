@@ -1,0 +1,32 @@
+From 32a773dc45d44a38a43328ed44eb8d7ad4b6b894 Mon Sep 17 00:00:00 2001
+From: Vstar <vstar0v0@hotmail.com>
+Date: Sat, 23 Nov 2013 01:28:41 +0800
+Subject: [Info] Maximum number of players can be displayed in the list/who
+Subject: [Type] Function
+Subject: [From] Vstar
+Subject: [Work] 100%
+Subject: [BUG] NO
+Subject: [Code] NO
+
+---
+ src/server/game/Handlers/MiscHandler.cpp | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/server/game/Handlers/MiscHandler.cpp b/src/server/game/Handlers/MiscHandler.cpp
+index 4da0d82..bb21fc6 100644
+--- a/src/server/game/Handlers/MiscHandler.cpp
++++ b/src/server/game/Handlers/MiscHandler.cpp
+@@ -272,8 +272,8 @@ void WorldSession::HandleWhoOpcode(WorldPacket& recvData)
+ 
+         // check if target's level is in level range
+         uint8 lvl = target->getLevel();
+-        if (lvl < level_min || lvl > level_max)
+-            continue;
++        /*if (lvl < level_min || lvl > level_max)
++            continue;*/
+ 
+         // check if class matches classmask
+         uint8 class_ = target->getClass();
+-- 
+1.8.3.msysgit.0
+

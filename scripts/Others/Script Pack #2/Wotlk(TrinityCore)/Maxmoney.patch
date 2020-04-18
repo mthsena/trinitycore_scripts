@@ -1,0 +1,61 @@
+From 2eae0a6f12fa32408cbce1231bbeea579e0be301 Mon Sep 17 00:00:00 2001
+From: Vstar <vstar0v0@hotmail.com>
+Date: Sat, 23 Nov 2013 23:38:25 +0800
+Subject: [Info] Money limits can be set to high
+Subject: [Type] Function
+Subject: [From] http://pastebin.com/NzZm4cUc By: ROCHET2
+Subject: [Work] 100%
+Subject: [BUG] NO
+Subject: [Code] NO
+---
+ src/server/game/Entities/Player/Player.h |  3 ++-
+ src/server/game/Handlers/MailHandler.cpp | 12 ++++++++++++
+ 2 files changed, 14 insertions(+), 1 deletion(-)
+
+diff --git a/src/server/game/Entities/Player/Player.h b/src/server/game/Entities/Player/Player.h
+index 35a3f5f..a54842f 100644
+--- a/src/server/game/Entities/Player/Player.h
++++ b/src/server/game/Entities/Player/Player.h
+@@ -824,7 +824,8 @@ enum PlayerDelayedOperations
+ 
+ // Player summoning auto-decline time (in secs)
+ #define MAX_PLAYER_SUMMON_DELAY                   (2*MINUTE)
+-#define MAX_MONEY_AMOUNT                       (0x7FFFFFFF-1)
++#define MAX_MONEY_AMOUNT                        (0xFFFFFFFF) // uint32 max
++#define OLD_MAX_MONEY_AMOUNT                    (0x7FFFFFFF-1) // using to error out things that wont work etc (int32 max -1)
+ 
+ struct InstancePlayerBind
+ {
+diff --git a/src/server/game/Handlers/MailHandler.cpp b/src/server/game/Handlers/MailHandler.cpp
+index 6fde51b..b7a61e0 100644
+--- a/src/server/game/Handlers/MailHandler.cpp
++++ b/src/server/game/Handlers/MailHandler.cpp
+@@ -111,6 +111,12 @@ void WorldSession::HandleSendMail(WorldPacket& recvData)
+         return;
+     }
+ 
++    if (reqmoney > OLD_MAX_MONEY_AMOUNT)
++    {
++        player->SendMailResult(0, MAIL_SEND, MAIL_ERR_INTERNAL_ERROR);
++        return;
++    }
++
+     Player* receiver = ObjectAccessor::FindPlayer(receiverGuid);
+ 
+     uint32 receiverTeam = 0;
+@@ -442,6 +448,12 @@ void WorldSession::HandleMailTakeItem(WorldPacket& recvData)
+         player->SendMailResult(mailId, MAIL_ITEM_TAKEN, MAIL_ERR_NOT_ENOUGH_MONEY);
+         return;
+     }
++ 
++    if (m->COD > OLD_MAX_MONEY_AMOUNT)
++    {
++        player->SendMailResult(mailId, MAIL_ITEM_TAKEN, MAIL_ERR_INTERNAL_ERROR);
++        return;
++    }
+ 
+     Item* it = player->GetMItem(itemId);
+ 
+-- 
+1.8.3.msysgit.0
+

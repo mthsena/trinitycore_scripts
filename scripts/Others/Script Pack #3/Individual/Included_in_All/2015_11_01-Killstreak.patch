@@ -1,0 +1,106 @@
+From 5e974bc59787245cc6b5d0ae4165703f2a7f8188 Mon Sep 17 00:00:00 2001
+From: LordPsyan <realmsofwarcraft@gmail.com>
+Date: Sun, 1 Nov 2015 10:49:08 -0600
+Subject: [PATCH] 2015_11_01-Killstreak
+
+---
+ src/server/game/Scripting/ScriptLoader.cpp |  6 ++-
+ src/server/scripts/Custom/killstreak.cpp   | 61 ++++++++++++++++++++++++++++++
+ 2 files changed, 65 insertions(+), 2 deletions(-)
+ create mode 100644 src/server/scripts/Custom/killstreak.cpp
+
+diff --git a/src/server/game/Scripting/ScriptLoader.cpp b/src/server/game/Scripting/ScriptLoader.cpp
+index fff6dd6..87d0b04 100644
+--- a/src/server/game/Scripting/ScriptLoader.cpp
++++ b/src/server/game/Scripting/ScriptLoader.cpp
+@@ -1437,7 +1437,8 @@ void AddBattlegroundScripts()
+ // start18
+ // start19
+ // start20
+-// start21
++// Killstreak
++void AddSC_PvP_System();
+ // start22
+ // start23
+ // start24
+@@ -1563,7 +1564,8 @@ void AddCustomScripts()
+ // end18
+ // end19
+ // end20
+-// end21
++    // Killstreak
++    AddSC_PvP_System();
+ // end22
+ // end23
+ // end24
+diff --git a/src/server/scripts/Custom/killstreak.cpp b/src/server/scripts/Custom/killstreak.cpp
+new file mode 100644
+index 0000000..4a0e831
+--- /dev/null
++++ b/src/server/scripts/Custom/killstreak.cpp
+@@ -0,0 +1,61 @@
++/*
++Originally by Kjanko
++Edited by Tommy
++Edited by Rochet2 ~ Made dynamic
++Last Edit By Estorn
++Change : Fix For Last Rev
++*/
++
++class System_OnKill : public PlayerScript
++{
++public:
++    System_OnKill() : PlayerScript("System_OnKill") {}
++
++    void OnPVPKill(Player * Killer, Player * Victim)
++    {
++        uint32 KillerGUID = Killer->GetGUID().GetCounter();
++        uint32 VictimGUID = Victim->GetGUID().GetCounter();
++
++        struct KillStreak_Info
++        {
++            uint32 killstreak;
++            uint32 lastkill;
++        };
++
++        static std::map<uint32, KillStreak_Info> KillStreakData;
++
++        if (KillerGUID == VictimGUID || KillStreakData[KillerGUID].lastkill == VictimGUID)
++            return;
++
++        if (KillStreakData[VictimGUID].killstreak >= 3)
++        {
++            std::ostringstream ss;
++            ss << "|cFF81CF42" << Killer->GetName() << "|r Server Killer Has Ended |cFFFFFFFF" << Victim->GetName() << " !!!! ";
++            sWorld->SendServerMessage(SERVER_MSG_STRING, ss.str().c_str());
++        }
++
++        ++KillStreakData[KillerGUID].killstreak;
++        KillStreakData[KillerGUID].lastkill = VictimGUID;
++        KillStreakData[VictimGUID].killstreak = 0;
++        KillStreakData[VictimGUID].lastkill = 0;
++
++        if (KillStreakData[KillerGUID].killstreak % 10 == 0) // send killstreak message every 10 kills
++        {
++            std::ostringstream ss;
++            ss << "|cFF81CF42" << Killer->GetName() << "|r Server Killer Has A KillStreak Of |cFF42A0CF" << KillStreakData[KillerGUID].killstreak << "|r!!!!!";
++            sWorld->SendServerMessage(SERVER_MSG_STRING, ss.str().c_str());
++        }
++        else if (KillStreakData[KillerGUID].killstreak == 3)
++        {
++            std::ostringstream ss;
++            ss << "|cFF81CF42" << Killer->GetName() << "|r Server Killer Is On A KillingSpree!!!!!!";
++            sWorld->SendServerMessage(SERVER_MSG_STRING, ss.str().c_str());
++        }
++
++    }
++};
++
++void AddSC_PvP_System()
++{
++    new System_OnKill;
++}
+\ No newline at end of file
+-- 
+2.1.4
+

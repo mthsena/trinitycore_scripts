@@ -1,0 +1,75 @@
+diff --git a/src/server/game/Entities/Player/Player.h b/src/server/game/Entities/Player/Player.h
+index e7af827..d1094eb 100644
+--- a/src/server/game/Entities/Player/Player.h
++++ b/src/server/game/Entities/Player/Player.h
+@@ -515,6 +515,7 @@ enum AtLoginFlags
+     AT_LOGIN_CHANGE_FACTION    = 0x040,
+     AT_LOGIN_CHANGE_RACE       = 0x080,
+     AT_LOGIN_RESURRECT         = 0x100,
++    AT_LOGIN_UPDATE_NAME       = 0x120
+ };
+ 
+ typedef std::map<uint32, QuestStatusData> QuestStatusMap;
+diff --git a/src/server/game/Handlers/CharacterHandler.cpp b/src/server/game/Handlers/CharacterHandler.cpp
+index e0d7903..001f456 100644
+--- a/src/server/game/Handlers/CharacterHandler.cpp
++++ b/src/server/game/Handlers/CharacterHandler.cpp
+@@ -971,6 +971,19 @@ void WorldSession::HandlePlayerLogin(LoginQueryHolder* holder)
+     if (firstLogin)
+         pCurrChar->RemoveAtLoginFlag(AT_LOGIN_FIRST);
+ 
++	if (pCurrChar->HasAtLoginFlag(AT_LOGIN_UPDATE_NAME))
++	{
++		QueryResult result = CharacterDatabase.PQuery("SELECT name, account FROM characters WHERE guid = %u", pCurrChar->GetGUID());
++		if (result)
++		{
++			std::string charName = (*result)[0].GetString();
++			uint32 accountId = (*result)[1].GetUInt32();
++			sWorld->UpdateCharacterInfo(pCurrChar->GetGUID(), charName);
++			sWorld->AddCharacterInfo(pCurrChar->GetGUID(), accountId, charName, pCurrChar->getGender(), pCurrChar->getRace(), pCurrChar->getClass(), pCurrChar->getLevel());
++		}
++		pCurrChar->RemoveAtLoginFlag(AT_LOGIN_UPDATE_NAME);
++	}
++
+     // show time before shutdown if shutdown planned.
+     if (sWorld->IsShuttingDown())
+         sWorld->ShutdownMsg(true, pCurrChar);
+diff --git a/src/server/game/World/World.cpp b/src/server/game/World/World.cpp
+index 09cc918..abd44da 100644
+--- a/src/server/game/World/World.cpp
++++ b/src/server/game/World/World.cpp
+@@ -3241,11 +3241,11 @@ void World::AddCharacterInfo(ObjectGuid const& guid, uint32 accountId, std::stri
+     data.Level = level;
+ }
+ 
+-void World::UpdateCharacterInfo(ObjectGuid const& guid, std::string const& name, uint8 gender /*= GENDER_NONE*/, uint8 race /*= RACE_NONE*/)
++bool World::UpdateCharacterInfo(ObjectGuid const& guid, std::string const& name, uint8 gender /*= GENDER_NONE*/, uint8 race /*= RACE_NONE*/)
+ {
+     CharacterInfoContainer::iterator itr = _characterInfoStore.find(guid);
+     if (itr == _characterInfoStore.end())
+-        return;
++        return false;
+ 
+     itr->second.Name = name;
+ 
+@@ -3258,6 +3258,7 @@ void World::UpdateCharacterInfo(ObjectGuid const& guid, std::string const& name,
+     WorldPacket data(SMSG_INVALIDATE_PLAYER, 8);
+     data << guid;
+     SendGlobalMessage(&data);
++    return true;
+ }
+ 
+ void World::UpdateCharacterInfoLevel(ObjectGuid const& guid, uint8 level)
+diff --git a/src/server/game/World/World.h b/src/server/game/World/World.h
+index a624fd6..a537d31 100644
+--- a/src/server/game/World/World.h
++++ b/src/server/game/World/World.h
+@@ -764,7 +764,7 @@ class World
+         void AddCharacterInfo(ObjectGuid const& guid, uint32 accountId, std::string const& name, uint8 gender, uint8 race, uint8 playerClass, uint8 level);
+         void DeleteCharacterInfo(ObjectGuid const& guid) { _characterInfoStore.erase(guid); }
+         bool HasCharacterInfo(ObjectGuid const& guid) { return _characterInfoStore.find(guid) != _characterInfoStore.end(); }
+-        void UpdateCharacterInfo(ObjectGuid const& guid, std::string const& name, uint8 gender = GENDER_NONE, uint8 race = RACE_NONE);
++        bool UpdateCharacterInfo(ObjectGuid const& guid, std::string const& name, uint8 gender = GENDER_NONE, uint8 race = RACE_NONE);
+         void UpdateCharacterInfoLevel(ObjectGuid const& guid, uint8 level);
+ 
+         uint32 GetCleaningFlags() const { return m_CleaningFlags; }

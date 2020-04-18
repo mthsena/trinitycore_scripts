@@ -1,0 +1,131 @@
+diff --git a/src/server/game/Handlers/MiscHandler.cpp b/src/server/game/Handlers/MiscHandler.cpp
+index 7b8ce80..53b8133 100644
+--- a/src/server/game/Handlers/MiscHandler.cpp
++++ b/src/server/game/Handlers/MiscHandler.cpp
+@@ -102,6 +102,30 @@ void WorldSession::HandleGossipSelectOptionOpcode(WorldPacket& recvData)
+     if (_player->PlayerTalkClass->GetGossipMenu().GetSenderGUID() != guid)
+         return;
+ 
++    if (guid.IsPlayer())
++    {
++        if (_player->GetGUID() == guid && _player->PlayerTalkClass->GetGossipMenu().GetMenuId() == menuId)
++        {
++            if (code.empty())
++                sScriptMgr->OnGossipSelect(_player, menuId, _player->PlayerTalkClass->GetGossipOptionSender(gossipListId), _player->PlayerTalkClass->GetGossipOptionAction(gossipListId));
++            else
++                sScriptMgr->OnGossipSelectCode(_player, menuId, _player->PlayerTalkClass->GetGossipOptionSender(gossipListId), _player->PlayerTalkClass->GetGossipOptionAction(gossipListId), code.c_str());
++        }
++        return;
++    }
++
++    if (guid.IsItem())
++    {
++        if (Item* item = _player->GetItemByGuid(guid))
++        {
++            if (code.empty())
++                sScriptMgr->OnGossipSelect(_player, item, _player->PlayerTalkClass->GetGossipOptionSender(gossipListId), _player->PlayerTalkClass->GetGossipOptionAction(gossipListId));
++            else
++                sScriptMgr->OnGossipSelectCode(_player, item, _player->PlayerTalkClass->GetGossipOptionSender(gossipListId), _player->PlayerTalkClass->GetGossipOptionAction(gossipListId), code.c_str());
++        }
++        return;
++    }
++
+     Creature* unit = NULL;
+     GameObject* go = NULL;
+     if (guid.IsCreatureOrVehicle())
+diff --git a/src/server/game/Scripting/ScriptMgr.cpp b/src/server/game/Scripting/ScriptMgr.cpp
+index aed829a..ae781db 100644
+--- a/src/server/game/Scripting/ScriptMgr.cpp
++++ b/src/server/game/Scripting/ScriptMgr.cpp
+@@ -733,6 +733,22 @@ bool ScriptMgr::OnItemRemove(Player* player, Item* item)
+     return tmpscript->OnRemove(player, item);
+ }
+ 
++void ScriptMgr::OnGossipSelect(Player* player, Item* item, uint32 sender, uint32 action)
++{
++    ASSERT(player);
++    ASSERT(item);
++
++    FOREACH_SCRIPT(ItemScript)->OnGossipSelect(player, item, sender, action);
++}
++
++void ScriptMgr::OnGossipSelectCode(Player* player, Item* item, uint32 sender, uint32 action, const char* code)
++{
++    ASSERT(player);
++    ASSERT(item);
++
++    FOREACH_SCRIPT(ItemScript)->OnGossipSelectCode(player, item, sender, action, code);
++}
++
+ bool ScriptMgr::OnDummyEffect(Unit* caster, uint32 spellId, SpellEffIndex effIndex, Creature* target)
+ {
+     ASSERT(caster);
+@@ -1314,6 +1330,20 @@ void ScriptMgr::OnQuestStatusChange(Player* player, uint32 questId, QuestStatus
+     FOREACH_SCRIPT(PlayerScript)->OnQuestStatusChange(player, questId, status);
+ }
+ 
++void ScriptMgr::OnGossipSelect(Player* player, uint32 menu_id, uint32 sender, uint32 action)
++{
++    ASSERT(player);
++
++    FOREACH_SCRIPT(PlayerScript)->OnGossipSelect(player, menu_id, sender, action);
++}
++
++void ScriptMgr::OnGossipSelectCode(Player* player, uint32 menu_id, uint32 sender, uint32 action, const char* code)
++{
++    ASSERT(player);
++
++    FOREACH_SCRIPT(PlayerScript)->OnGossipSelectCode(player, menu_id, sender, action, code);
++}
++
+ // Account
+ void ScriptMgr::OnAccountLogin(uint32 accountId)
+ {
+diff --git a/src/server/game/Scripting/ScriptMgr.h b/src/server/game/Scripting/ScriptMgr.h
+index a226f1b..d547938 100644
+--- a/src/server/game/Scripting/ScriptMgr.h
++++ b/src/server/game/Scripting/ScriptMgr.h
+@@ -393,6 +393,12 @@ class ItemScript : public ScriptObject
+ 
+         // Called when the item is destroyed.
+         virtual bool OnRemove(Player* /*player*/, Item* /*item*/) { return false; }
++
++        // Called when a player selects an option in an item gossip window
++        virtual void OnGossipSelect(Player* /*player*/, Item* /*item*/, uint32 /*sender*/, uint32 /*action*/) { }
++
++        // Called when a player selects an option in an item gossip window
++        virtual void OnGossipSelectCode(Player* /*player*/, Item* /*item*/, uint32 /*sender*/, uint32 /*action*/, const char* /*code*/) { }
+ };
+ 
+ class UnitScript : public ScriptObject
+@@ -772,6 +778,12 @@ class PlayerScript : public UnitScript
+ 
+         // Called after a player's quest status has been changed
+         virtual void OnQuestStatusChange(Player* /*player*/, uint32 /*questId*/, QuestStatus /*status*/) { }
++
++        // Called when a player selects an option in a player gossip window
++        virtual void OnGossipSelect(Player* /*player*/, uint32 /*menu_id*/, uint32 /*sender*/, uint32 /*action*/) { }
++
++        // Called when a player selects an option in a player gossip window
++        virtual void OnGossipSelectCode(Player* /*player*/, uint32 /*menu_id*/, uint32 /*sender*/, uint32 /*action*/, const char* /*code*/) { }
+ };
+ 
+ class AccountScript : public ScriptObject
+@@ -970,6 +982,8 @@ class ScriptMgr
+         bool OnItemUse(Player* player, Item* item, SpellCastTargets const& targets);
+         bool OnItemExpire(Player* player, ItemTemplate const* proto);
+         bool OnItemRemove(Player* player, Item* item);
++        void OnGossipSelect(Player* player, Item* item, uint32 sender, uint32 action);
++        void OnGossipSelectCode(Player* player, Item* item, uint32 sender, uint32 action, const char* code);
+ 
+     public: /* CreatureScript */
+ 
+@@ -1089,6 +1103,8 @@ class ScriptMgr
+         void OnPlayerBindToInstance(Player* player, Difficulty difficulty, uint32 mapid, bool permanent);
+         void OnPlayerUpdateZone(Player* player, uint32 newZone, uint32 newArea);
+         void OnQuestStatusChange(Player* player, uint32 questId, QuestStatus status);
++        void OnGossipSelect(Player* player, uint32 menu_id, uint32 sender, uint32 action);
++        void OnGossipSelectCode(Player* player, uint32 menu_id, uint32 sender, uint32 action, const char* code);
+ 
+     public: /* AccountScript */
+ 

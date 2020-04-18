@@ -1,0 +1,113 @@
+From ac03cc7f6ae71a132ed079350c31e580bd803b74 Mon Sep 17 00:00:00 2001
+From: LordPsyan <realmsofwarcraft@gmail.com>
+Date: Sun, 1 Nov 2015 10:31:45 -0600
+Subject: [PATCH] 2015_11_01-StartGuild
+
+---
+ src/server/game/Scripting/ScriptLoader.cpp      |  6 +++--
+ src/server/scripts/Custom/gon_playerscripts.cpp | 31 +++++++++++++++++++++++++
+ src/server/worldserver/worldserver.conf.dist    | 25 ++++++++++++++++++++
+ 3 files changed, 60 insertions(+), 2 deletions(-)
+ create mode 100644 src/server/scripts/Custom/gon_playerscripts.cpp
+
+diff --git a/src/server/game/Scripting/ScriptLoader.cpp b/src/server/game/Scripting/ScriptLoader.cpp
+index fff6dd6..a524bf9 100644
+--- a/src/server/game/Scripting/ScriptLoader.cpp
++++ b/src/server/game/Scripting/ScriptLoader.cpp
+@@ -1493,7 +1493,8 @@ void AddBattlegroundScripts()
+ // start74
+ // start75
+ // start76
+-// start77
++// Start Guild
++    void AddSC_gon_playerscripts();
+ // start78
+ // start79
+ // start80
+@@ -1619,7 +1620,8 @@ void AddCustomScripts()
+ // end74
+ // end75
+ // end76
+-// end77
++// Start Guild
++AddSC_gon_playerscripts();
+ // end78
+ // end79
+ // end80
+diff --git a/src/server/scripts/Custom/gon_playerscripts.cpp b/src/server/scripts/Custom/gon_playerscripts.cpp
+new file mode 100644
+index 0000000..4e3a8c6
+--- /dev/null
++++ b/src/server/scripts/Custom/gon_playerscripts.cpp
+@@ -0,0 +1,31 @@
++#include "ScriptMgr.h"
++#include "Player.h"
++#include "GuildMgr.h"
++#include "Config.h"
++/*
++#define GUILD_ID_ALLIANCE 45 //Guild ID
++#define GUILD_ID_HORDE   46 //Guild ID
++*/
++class gon_playerscripts : public PlayerScript
++{
++    public:
++        gon_playerscripts() : PlayerScript("gon_playerscripts") { }
++
++   void OnLogin(Player* player, bool firstLogin)
++    {
++        if (firstLogin)
++        {
++            uint32 GUILD_ID_ALLIANCE = sConfigMgr->GetIntDefault("StartGuild.Alliance", 0);
++            uint32 GUILD_ID_HORDE = sConfigMgr->GetIntDefault("StartGuild.Horde", 0);
++            Guild* guild = sGuildMgr->GetGuildById(player->GetTeam() == ALLIANCE ? GUILD_ID_ALLIANCE : GUILD_ID_HORDE);
++
++            if (guild)
++                guild->AddMember(player->GetGUID());
++        }
++    }
++};
++
++void AddSC_gon_playerscripts()
++{
++    new gon_playerscripts();
++}
+\ No newline at end of file
+diff --git a/src/server/worldserver/worldserver.conf.dist b/src/server/worldserver/worldserver.conf.dist
+index 8a7da8c..d12bb15 100644
+--- a/src/server/worldserver/worldserver.conf.dist
++++ b/src/server/worldserver/worldserver.conf.dist
+@@ -3431,6 +3431,31 @@ PacketSpoof.BanDuration = 86400
+ #
+ ###################################################################################################
+ 
++# Start Guild
++#
++# These settings set all new characters into a starting guild based on faction.
++#
++#    StartGuild.Alliance
++#        Description: Guild entry number for Alliance(Taken from guildid field in characters.guild table)
++#        Default: 45 (Default guildid)
++#                 1+ (guildid entry)
++#
++
++StartGuild.Alliance = 45
++
++#
++#    StartGuild.Horde
++#        Description: Guild entry number for Horde (Taken from guildid field in characters.guild table)
++#        Default: 46 (Default guildid)
++#                 1+ (guildid entry)
++
++#
++
++StartGuild.Horde = 46
++
++#
++###################################################################################################
++
+ #
+ # Prepatch by LordPsyan.
+ # See http://www.realmsofwarcraft.com/bb for forums and information.
+-- 
+2.1.4
+

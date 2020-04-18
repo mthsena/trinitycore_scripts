@@ -1,0 +1,45 @@
+From 54f8a0d5fc2b4855f8d47107a18e4549ef170aba Mon Sep 17 00:00:00 2001
+From: Vstar <vstar0v0@hotmail.com>
+Date: Sat, 23 Nov 2013 01:37:32 +0800
+Subject: [Info] In the /who the list, you can display the prefix title
+Subject: [Type] Function
+Subject: [From] http://emudevs.com/showthread.php/1347-Trinity-C-Core-Modification-lt-GM-gt-lt-Dev-gt-Tag-in-Who-List By: Synth
+Subject: [Work] 100%
+Subject: [BUG] NO
+Subject: [Code] NO
+
+---
+ src/server/game/Handlers/MiscHandler.cpp | 17 +++++++++++++++--
+ 1 file changed, 15 insertions(+), 2 deletions(-)
+
+diff --git a/src/server/game/Handlers/MiscHandler.cpp b/src/server/game/Handlers/MiscHandler.cpp
+index 4da0d82..e861dff 100644
+--- a/src/server/game/Handlers/MiscHandler.cpp
++++ b/src/server/game/Handlers/MiscHandler.cpp
+@@ -302,8 +302,21 @@ void WorldSession::HandleWhoOpcode(WorldPacket& recvData)
+         if (!z_show)
+             continue;
+ 
+-        std::string pname = target->GetName();
+-        std::wstring wpname;
++		std::string pname;
++		if (itr->second->HasFlag(PLAYER_FLAGS, PLAYER_FLAGS_DEVELOPER))
++		{
++			pname = "|cffffff00<Dev>|r";
++			pname.append(itr->second->GetName());
++		}
++		else
++			if (itr->second->IsGameMaster())
++			{
++				pname = "|cffff0000<GM>|r";
++				pname.append(itr->second->GetName());
++			}
++			else
++				pname = itr->second->GetName();
++		std::wstring wpname;
+         if (!Utf8toWStr(pname, wpname))
+             continue;
+         wstrToLower(wpname);
+-- 
+1.8.3.msysgit.0
+

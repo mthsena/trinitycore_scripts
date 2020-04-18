@@ -1,0 +1,96 @@
+From b99c5841cdb133d1a1c0846bb3eb613b1fc46c48 Mon Sep 17 00:00:00 2001
+From: LordPsyan <realmsofwarcraft@gmail.com>
+Date: Sat, 9 Jan 2016 07:34:29 -0600
+Subject: [PATCH] 2016_01_09-Account_Mounts
+
+---
+ src/server/game/Scripting/ScriptLoader.cpp  |  4 +--
+ src/server/scripts/Custom/account_mount.cpp | 53 +++++++++++++++++++++++++++++
+ 2 files changed, 55 insertions(+), 2 deletions(-)
+ create mode 100644 src/server/scripts/Custom/account_mount.cpp
+
+diff --git a/src/server/game/Scripting/ScriptLoader.cpp b/src/server/game/Scripting/ScriptLoader.cpp
+index 3640ce9..061eb8c 100644
+--- a/src/server/game/Scripting/ScriptLoader.cpp
++++ b/src/server/game/Scripting/ScriptLoader.cpp
+@@ -1499,7 +1499,7 @@ void AddBattlegroundScripts()
+ // start86
+ // start87
+ // start88
+-// start89
++void AddSC_accontmounts();
+ // start90
+ // start91
+ // start92
+@@ -1625,7 +1625,7 @@ void AddCustomScripts()
+ // end86
+ // end87
+ // end88
+-// end89
++    AddSC_accontmounts();
+ // end90
+ // end91
+ // end92
+diff --git a/src/server/scripts/Custom/account_mount.cpp b/src/server/scripts/Custom/account_mount.cpp
+new file mode 100644
+index 0000000..19b0a38
+--- /dev/null
++++ b/src/server/scripts/Custom/account_mount.cpp
+@@ -0,0 +1,53 @@
++class AccountMounts : public PlayerScript
++{
++    static const bool limitrace = true; // This set to true will only learn mounts from chars on the same team, do what you want.
++public:
++    AccountMounts() : PlayerScript("AccountMounts") { }
++
++    void OnLogin(Player* player, bool /*firstLogin*/) override
++    {
++        std::vector<uint32> Guids;
++        uint32 playerGUID = player->GetGUID();
++        QueryResult result1 = CharacterDatabase.PQuery("SELECT guid, race FROM characters WHERE account = %u", playerGUID);
++        if (!result1)
++            return;
++
++        do 
++        {
++            Field* fields = result1->Fetch();
++
++            uint32 guid = fields[0].GetUInt32();
++            uint32 race = fields[1].GetUInt8();
++
++            if ((Player::TeamForRace(race) == Player::TeamForRace(player->getRace())) || !limitrace)
++                Guids.push_back(result1->Fetch()[0].GetUInt32());
++
++        } while (result1->NextRow());
++
++        std::vector<uint32> Spells;
++
++        for (auto& i : Guids)
++        {
++            QueryResult result2 = CharacterDatabase.PQuery("SELECT spell FROM character_spell WHERE guid = %u", i);
++            if (!result2)
++                continue;
++
++            do
++            {
++                Spells.push_back(result2->Fetch()[0].GetUInt32());
++            } while (result2->NextRow());
++        }
++
++        for (auto& i : Spells)
++        {
++            auto sSpell = sSpellStore.LookupEntry(i);
++            if (sSpell->Effect[0] == SPELL_EFFECT_APPLY_AURA && sSpell->EffectApplyAuraName[0] == SPELL_AURA_MOUNTED)
++                player->LearnSpell(sSpell->Id, false);
++        }
++    }
++};
++
++void AddSC_accontmounts()
++{
++    new AccountMounts;
++}
+\ No newline at end of file
+-- 
+2.1.4
+

@@ -1,0 +1,18 @@
+---JadaDev--- <<TELEPORTER>>
+
+Created By : JadaDev
+
+Special thanks to Rochet2
+
+Requirments :
+
+HeidiSQL
+
+Steps : 
+
+Open files ( 1, 2, 3, and 4 ) than RUN them.
+Be sure that files are SQLs
+
+Enjoy Teleporter with Icons 
+
+Maker is JadaDev contact me on skype: Mohamedss98 (Unknown)

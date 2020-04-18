@@ -1,0 +1,755 @@
+From 6238171cc325b12489251acf0724f8bbea6d88a0 Mon Sep 17 00:00:00 2001
+From: LordPsyan <realmsofwarcraft@gmail.com>
+Date: Tue, 8 Dec 2015 07:53:46 -0600
+Subject: [PATCH] 2015_12_08-1v1ArenaFITTED
+
+---
+ .../arena1v1/character_v2.0.sql                    |   2 +
+ sql/TrinityCore-Patches/arena1v1/world_v1.0.sql    |   3 +
+ src/server/game/Battlegrounds/ArenaTeam.cpp        |   4 +-
+ src/server/game/Battlegrounds/ArenaTeam.h          |   2 +-
+ src/server/game/Battlegrounds/Battleground.cpp     |   5 +
+ src/server/game/Battlegrounds/Battleground.h       |   2 +-
+ src/server/game/Battlegrounds/BattlegroundMgr.cpp  |   2 +-
+ .../game/Battlegrounds/BattlegroundQueue.cpp       |   2 +
+ src/server/game/Entities/Player/Player.cpp         |   1 +
+ src/server/game/Handlers/BattleGroundHandler.cpp   |   6 +-
+ src/server/game/Handlers/PetitionsHandler.cpp      |   4 +-
+ src/server/game/Scripting/ScriptLoader.cpp         |   6 +-
+ src/server/game/World/World.cpp                    |   8 +
+ src/server/game/World/World.h                      |   8 +-
+ src/server/scripts/Custom/npc_arena1v1.cpp         | 309 +++++++++++++++++++++
+ src/server/scripts/Custom/npc_arena1v1.h           |  69 +++++
+ src/server/worldserver/worldserver.conf.dist       |  65 +++++
+ 17 files changed, 489 insertions(+), 9 deletions(-)
+ create mode 100644 sql/TrinityCore-Patches/arena1v1/character_v2.0.sql
+ create mode 100644 sql/TrinityCore-Patches/arena1v1/world_v1.0.sql
+ create mode 100644 src/server/scripts/Custom/npc_arena1v1.cpp
+ create mode 100644 src/server/scripts/Custom/npc_arena1v1.h
+
+diff --git a/sql/TrinityCore-Patches/arena1v1/character_v2.0.sql b/sql/TrinityCore-Patches/arena1v1/character_v2.0.sql
+new file mode 100644
+index 0000000..9f6e4a4
+--- /dev/null
++++ b/sql/TrinityCore-Patches/arena1v1/character_v2.0.sql
+@@ -0,0 +1,2 @@
++-- Delete all 5v5 teams and members (core will crash if any 5v5 team exist)
++DELETE arena_team_member, arena_team FROM arena_team_member, arena_team WHERE arena_team_member.arenaTeamId = arena_team.arenaTeamId AND arena_team.type = 5;
+diff --git a/sql/TrinityCore-Patches/arena1v1/world_v1.0.sql b/sql/TrinityCore-Patches/arena1v1/world_v1.0.sql
+new file mode 100644
+index 0000000..0222faf
+--- /dev/null
++++ b/sql/TrinityCore-Patches/arena1v1/world_v1.0.sql
+@@ -0,0 +1,3 @@
++DELETE FROM `creature_template` WHERE `entry` = 535200;
++INSERT INTO `creature_template` (`entry`, `difficulty_entry_1`, `difficulty_entry_2`, `difficulty_entry_3`, `KillCredit1`, `KillCredit2`, `modelid1`, `modelid2`, `modelid3`, `modelid4`, `name`, `subname`, `IconName`, `gossip_menu_id`, `minlevel`, `maxlevel`, `exp`, `faction`, `npcflag`, `speed_walk`, `speed_run`, `scale`, `rank`, `dmgschool`, `BaseAttackTime`, `RangeAttackTime`, `BaseVariance`, `RangeVariance`, `unit_class`, `unit_flags`, `unit_flags2`, `dynamicflags`, `family`, `trainer_type`, `trainer_spell`, `trainer_class`, `trainer_race`, `type`, `type_flags`, `lootid`, `pickpocketloot`, `skinloot`, `resistance1`, `resistance2`, `resistance3`, `resistance4`, `resistance5`, `resistance6`, `spell1`, `spell2`, `spell3`, `spell4`, `spell5`, `spell6`, `spell7`, `spell8`, `PetSpellDataId`, `VehicleId`, `mingold`, `maxgold`, `AIName`, `MovementType`, `InhabitType`, `HoverHeight`, `HealthModifier`, `ManaModifier`, `ArmorModifier`, `DamageModifier`, `ExperienceModifier`, `RacialLeader`, `movementId`, `RegenHealth`, `mechanic_immune_mask`, `flags_extra`, `ScriptName`, `VerifiedBuild`) VALUES
++('535200','0','0','0','0','0','18','0','18','0','LordPsyan','1v1 Arena master','','0','59','61','0','35','1','1.48','1.14286','0','0','0','1500','1900','1','1','1','0','0','0','0','0','0','0','0','7','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','','1','3','1','1','1','1','1','1','0','0','1','0','0','npc_1v1arena','1');
+\ No newline at end of file
+diff --git a/src/server/game/Battlegrounds/ArenaTeam.cpp b/src/server/game/Battlegrounds/ArenaTeam.cpp
+index 7806e0b..be010e2 100644
+--- a/src/server/game/Battlegrounds/ArenaTeam.cpp
++++ b/src/server/game/Battlegrounds/ArenaTeam.cpp
+@@ -439,7 +439,7 @@ void ArenaTeam::Query(WorldSession* session)
+     WorldPacket data(SMSG_ARENA_TEAM_QUERY_RESPONSE, 4*7+GetName().size()+1);
+     data << uint32(GetId());                                // team id
+     data << GetName();                                      // team name
+-    data << uint32(GetType());                              // arena team type (2=2x2, 3=3x3 or 5=5x5)
++    data << uint32(GetType() == 1 ? 5 : GetType());         // arena team type (2=2x2, 3=3x3 or 1=1x1(modify 1 to 5, so player can see arenateam in 5v5 slot))
+     data << uint32(BackgroundColor);                        // background color
+     data << uint32(EmblemStyle);                            // emblem style
+     data << uint32(EmblemColor);                            // emblem color
+@@ -611,6 +611,8 @@ uint32 ArenaTeam::GetPoints(uint32 memberRating)
+         points *= 0.76f;
+     else if (Type == ARENA_TEAM_3v3)
+         points *= 0.88f;
++    else if (Type == ARENA_TEAM_5v5) // 1v1 Arena
++        points *= sWorld->getFloatConfig(CONFIG_ARENA_1V1_ARENAPOINTS_MULTI);
+ 
+     return (uint32) points;
+ }
+diff --git a/src/server/game/Battlegrounds/ArenaTeam.h b/src/server/game/Battlegrounds/ArenaTeam.h
+index 2b08eaa..0c75f54 100644
+--- a/src/server/game/Battlegrounds/ArenaTeam.h
++++ b/src/server/game/Battlegrounds/ArenaTeam.h
+@@ -82,7 +82,7 @@ enum ArenaTeamTypes
+ {
+     ARENA_TEAM_2v2      = 2,
+     ARENA_TEAM_3v3      = 3,
+-    ARENA_TEAM_5v5      = 5
++    ARENA_TEAM_5v5      = 1 // 1v1 Arena - 5v5 doesn't exist anymore
+ };
+ 
+ struct ArenaTeamMember
+diff --git a/src/server/game/Battlegrounds/Battleground.cpp b/src/server/game/Battlegrounds/Battleground.cpp
+index d368b34..68fbe1e 100644
+--- a/src/server/game/Battlegrounds/Battleground.cpp
++++ b/src/server/game/Battlegrounds/Battleground.cpp
+@@ -467,6 +467,11 @@ inline void Battleground::_ProcessJoin(uint32 diff)
+         // First start warning - 2 or 1 minute
+         SendMessageToAll(StartMessageIds[BG_STARTING_EVENT_FIRST], CHAT_MSG_BG_SYSTEM_NEUTRAL);
+     }
++
++    // 1v1 Arena - Start arena after 15s, when all players are in arena
++    if(GetArenaType() == ARENA_TYPE_5v5 && GetStartDelayTime() > StartDelayTimes[BG_STARTING_EVENT_THIRD] && (m_PlayersCount[0] + m_PlayersCount[1]) == 2)
++        SetStartDelayTime(StartDelayTimes[BG_STARTING_EVENT_THIRD]);
++
+     // After 1 minute or 30 seconds, warning is signaled
+     else if (GetStartDelayTime() <= StartDelayTimes[BG_STARTING_EVENT_SECOND] && !(m_Events & BG_STARTING_EVENT_2))
+     {
+diff --git a/src/server/game/Battlegrounds/Battleground.h b/src/server/game/Battlegrounds/Battleground.h
+index 471da98..6da3e56 100644
+--- a/src/server/game/Battlegrounds/Battleground.h
++++ b/src/server/game/Battlegrounds/Battleground.h
+@@ -183,7 +183,7 @@ enum ArenaType
+ {
+     ARENA_TYPE_2v2          = 2,
+     ARENA_TYPE_3v3          = 3,
+-    ARENA_TYPE_5v5          = 5
++    ARENA_TYPE_5v5          = 1 // 1v1 Arena - 5v5 doesn't exist anymore
+ };
+ 
+ enum BattlegroundStartingEvents
+diff --git a/src/server/game/Battlegrounds/BattlegroundMgr.cpp b/src/server/game/Battlegrounds/BattlegroundMgr.cpp
+index 3aac3f0..ed87c7e 100644
+--- a/src/server/game/Battlegrounds/BattlegroundMgr.cpp
++++ b/src/server/game/Battlegrounds/BattlegroundMgr.cpp
+@@ -421,7 +421,7 @@ Battleground* BattlegroundMgr::CreateNewBattleground(BattlegroundTypeId original
+                 maxPlayersPerTeam = 3;
+                 break;
+             case ARENA_TYPE_5v5:
+-                maxPlayersPerTeam = 5;
++                maxPlayersPerTeam = 1; // 1v1 Arena
+                 break;
+         }
+ 
+diff --git a/src/server/game/Battlegrounds/BattlegroundQueue.cpp b/src/server/game/Battlegrounds/BattlegroundQueue.cpp
+index 223b71e..b28293e 100644
+--- a/src/server/game/Battlegrounds/BattlegroundQueue.cpp
++++ b/src/server/game/Battlegrounds/BattlegroundQueue.cpp
+@@ -163,6 +163,7 @@ GroupQueueInfo* BattlegroundQueue::AddGroup(Player* leader, Group* grp, Battlegr
+     {
+         ArenaTeam* Team = sArenaTeamMgr->GetArenaTeamById(arenateamid);
+         if (Team)
++            if ((Team->GetType() == ARENA_TYPE_5v5 && sWorld->getBoolConfig(CONFIG_ARENA_1V1_ANNOUNCER)) || Team->GetType() != ARENA_TYPE_5v5)
+             sWorld->SendWorldText(LANG_ARENA_QUEUE_ANNOUNCE_WORLD_JOIN, Team->GetName().c_str(), ginfo->ArenaType, ginfo->ArenaType, ginfo->ArenaTeamRating);
+     }
+ 
+@@ -355,6 +356,7 @@ void BattlegroundQueue::RemovePlayer(ObjectGuid guid, bool decreaseInvitedCount)
+     // announce to world if arena team left queue for rated match, show only once
+     if (group->ArenaType && group->IsRated && group->Players.empty() && sWorld->getBoolConfig(CONFIG_ARENA_QUEUE_ANNOUNCER_ENABLE))
+         if (ArenaTeam* Team = sArenaTeamMgr->GetArenaTeamById(group->ArenaTeamId))
++            if (Team && ((Team->GetType() == ARENA_TYPE_5v5 && sWorld->getBoolConfig(CONFIG_ARENA_1V1_ANNOUNCER)) || Team->GetType() != ARENA_TYPE_5v5))
+             sWorld->SendWorldText(LANG_ARENA_QUEUE_ANNOUNCE_WORLD_EXIT, Team->GetName().c_str(), group->ArenaType, group->ArenaType, group->ArenaTeamRating);
+ 
+     // if player leaves queue and he is invited to rated arena match, then he have to lose
+diff --git a/src/server/game/Entities/Player/Player.cpp b/src/server/game/Entities/Player/Player.cpp
+index 4503b79..116d86e 100644
+--- a/src/server/game/Entities/Player/Player.cpp
++++ b/src/server/game/Entities/Player/Player.cpp
+@@ -21457,6 +21457,7 @@ uint32 Player::GetMaxPersonalArenaRatingRequirement(uint32 minarenaslot) const
+     uint32 max_personal_rating = 0;
+     for (uint8 i = minarenaslot; i < MAX_ARENA_SLOT; ++i)
+     {
++        if(i == 2 && sWorld->getBoolConfig(CONFIG_ARENA_1V1_VENDOR_RATING) == false) continue;
+         if (ArenaTeam* at = sArenaTeamMgr->GetArenaTeamById(GetArenaTeamId(i)))
+         {
+             uint32 p_rating = GetArenaPersonalRating(i);
+diff --git a/src/server/game/Handlers/BattleGroundHandler.cpp b/src/server/game/Handlers/BattleGroundHandler.cpp
+index 68cc591..138dadc 100644
+--- a/src/server/game/Handlers/BattleGroundHandler.cpp
++++ b/src/server/game/Handlers/BattleGroundHandler.cpp
+@@ -37,7 +37,7 @@
+ // Prepatch by LordPsyan
+ // 01
+ // 02
+-// 03
++#include "../../scripts/Custom/npc_arena1v1.h"
+ // 04
+ // 05
+ // 06
+@@ -468,6 +468,10 @@ void WorldSession::HandleBattleFieldPortOpcode(WorldPacket &recvData)
+         if (!_player->IsInvitedForBattlegroundQueueType(bgQueueTypeId))
+             return;                                 // cheating?
+ 
++        // 1v1 Arena. Player can't join arena when forbidden talents are used.
++        if(bgQueueTypeId == BATTLEGROUND_QUEUE_5v5 && Arena1v1CheckTalents(_player) == false)
++            return;
++
+         if (!_player->InBattleground())
+             _player->SetBattlegroundEntryPoint();
+ 
+diff --git a/src/server/game/Handlers/PetitionsHandler.cpp b/src/server/game/Handlers/PetitionsHandler.cpp
+index 952659d..145e874 100644
+--- a/src/server/game/Handlers/PetitionsHandler.cpp
++++ b/src/server/game/Handlers/PetitionsHandler.cpp
+@@ -941,7 +941,7 @@ void WorldSession::SendPetitionShowList(ObjectGuid guid)
+     }
+     else
+     {
+-        data << uint8(3);                                   // count
++        data << uint8(2);                                   // count
+         // 2v2
+         data << uint32(1);                                  // index
+         data << uint32(ARENA_TEAM_CHARTER_2v2);             // charter entry
+@@ -957,12 +957,14 @@ void WorldSession::SendPetitionShowList(ObjectGuid guid)
+         data << uint32(3);                                  // unknown
+         data << uint32(3);                                  // required signs?
+         // 5v5
++        /* Disable purchase 5v5 petition - edit to 1v1 doesn't work (client prevent it)
+         data << uint32(3);                                  // index
+         data << uint32(ARENA_TEAM_CHARTER_5v5);             // charter entry
+         data << uint32(CHARTER_DISPLAY_ID);                 // charter display id
+         data << uint32(sWorld->getIntConfig(CONFIG_CHARTER_COST_ARENA_5v5)); // charter cost
+         data << uint32(5);                                  // unknown
+         data << uint32(5);                                  // required signs?
++        */
+     }
+ 
+     SendPacket(&data);
+diff --git a/src/server/game/Scripting/ScriptLoader.cpp b/src/server/game/Scripting/ScriptLoader.cpp
+index 4ea8583..354828f 100644
+--- a/src/server/game/Scripting/ScriptLoader.cpp
++++ b/src/server/game/Scripting/ScriptLoader.cpp
+@@ -1471,7 +1471,8 @@ void AddBattlegroundScripts()
+ // start58
+ // start59
+ // start60
+-// start61
++// 1v1 Arena
++void AddSC_npc_1v1arena();
+ // start62
+ // start63
+ // start64
+@@ -1597,7 +1598,8 @@ void AddCustomScripts()
+ // end58
+ // end59
+ // end60
+-// end61
++// 1v1 Arena
++    AddSC_npc_1v1arena();
+ // end62
+ // end63
+ // end64
+diff --git a/src/server/game/World/World.cpp b/src/server/game/World/World.cpp
+index 76f841f..df8880a 100644
+--- a/src/server/game/World/World.cpp
++++ b/src/server/game/World/World.cpp
+@@ -1070,6 +1070,14 @@ void World::LoadConfigSettings(bool reload)
+     m_bool_configs[CONFIG_ARENA_SEASON_IN_PROGRESS]                  = sConfigMgr->GetBoolDefault("Arena.ArenaSeason.InProgress", true);
+     m_bool_configs[CONFIG_ARENA_LOG_EXTENDED_INFO]                   = sConfigMgr->GetBoolDefault("ArenaLog.ExtendedInfo", false);
+ 
++    m_bool_configs[CONFIG_ARENA_1V1_ENABLE]                             = sConfigMgr->GetBoolDefault("Arena.1v1.Enable", true);
++    m_bool_configs[CONFIG_ARENA_1V1_ANNOUNCER]                         = sConfigMgr->GetBoolDefault("Arena.1v1.Announcer", false);
++    m_int_configs[CONFIG_ARENA_1V1_MIN_LEVEL]                         = sConfigMgr->GetIntDefault("Arena.1v1.MinLevel", 80);
++    m_int_configs[CONFIG_ARENA_1V1_COSTS]                             = sConfigMgr->GetIntDefault("Arena.1v1.Costs", 400000);
++    m_bool_configs[CONFIG_ARENA_1V1_VENDOR_RATING]                     = sConfigMgr->GetBoolDefault("Arena.1v1.VendorRating", false);
++    m_float_configs[CONFIG_ARENA_1V1_ARENAPOINTS_MULTI]                 = sConfigMgr->GetFloatDefault("Arena.1v1.ArenaPointsMulti", 0.64f);
++    m_bool_configs[CONFIG_ARENA_1V1_BLOCK_FORBIDDEN_TALENTS]         = sConfigMgr->GetBoolDefault("Arena.1v1.BlockForbiddenTalents", true);
++
+     m_bool_configs[CONFIG_OFFHAND_CHECK_AT_SPELL_UNLEARN]            = sConfigMgr->GetBoolDefault("OffhandCheckAtSpellUnlearn", true);
+ 
+     m_int_configs[CONFIG_CREATURE_PICKPOCKET_REFILL] = sConfigMgr->GetIntDefault("Creature.PickPocketRefillDelay", 10 * MINUTE);
+diff --git a/src/server/game/World/World.h b/src/server/game/World/World.h
+index 600bd79..6449748 100644
+--- a/src/server/game/World/World.h
++++ b/src/server/game/World/World.h
+@@ -131,6 +131,10 @@ enum WorldBoolConfigs
+     CONFIG_ARENA_QUEUE_ANNOUNCER_PLAYERONLY,
+     CONFIG_ARENA_SEASON_IN_PROGRESS,
+     CONFIG_ARENA_LOG_EXTENDED_INFO,
++    CONFIG_ARENA_1V1_ENABLE,
++    CONFIG_ARENA_1V1_ANNOUNCER,
++    CONFIG_ARENA_1V1_VENDOR_RATING,
++    CONFIG_ARENA_1V1_BLOCK_FORBIDDEN_TALENTS,
+     CONFIG_OFFHAND_CHECK_AT_SPELL_UNLEARN,
+     CONFIG_VMAP_INDOOR_CHECK,
+     CONFIG_START_ALL_SPELLS,
+@@ -224,7 +228,7 @@ enum WorldFloatConfigs
+     // 32
+     // 33
+     // 34
+-    // 35
++    CONFIG_ARENA_1V1_ARENAPOINTS_MULTI,
+     // 36
+     // 37
+     // 38
+@@ -358,6 +362,8 @@ enum WorldIntConfigs
+     CONFIG_ARENA_START_RATING,
+     CONFIG_ARENA_START_PERSONAL_RATING,
+     CONFIG_ARENA_START_MATCHMAKER_RATING,
++    CONFIG_ARENA_1V1_MIN_LEVEL,
++    CONFIG_ARENA_1V1_COSTS,
+     CONFIG_MAX_WHO,
+     CONFIG_HONOR_AFTER_DUEL,
+     CONFIG_PVP_TOKEN_MAP_TYPE,
+diff --git a/src/server/scripts/Custom/npc_arena1v1.cpp b/src/server/scripts/Custom/npc_arena1v1.cpp
+new file mode 100644
+index 0000000..c2f6792
+--- /dev/null
++++ b/src/server/scripts/Custom/npc_arena1v1.cpp
+@@ -0,0 +1,309 @@
++/*
++ *
++ * Copyright (C) 2013 Emu-Devstore <http://emu-devstore.com/>
++ * Written by Teiby <http://www.teiby.de/>
++ *
++ */
++
++#include "ScriptMgr.h"
++#include "ArenaTeamMgr.h"
++#include "Common.h"
++#include "DisableMgr.h"
++#include "BattlegroundMgr.h"
++#include "Battleground.h"
++#include "ArenaTeam.h"
++#include "Language.h"
++#include "npc_arena1v1.h"
++
++
++class npc_1v1arena : public CreatureScript
++{
++public:
++    npc_1v1arena() : CreatureScript("npc_1v1arena")
++    {
++    }
++
++
++    bool JoinQueueArena(Player* player, Creature* me, bool isRated)
++    {
++        if(!player || !me)
++            return false;
++
++        if(sWorld->getIntConfig(CONFIG_ARENA_1V1_MIN_LEVEL) > player->getLevel())
++            return false;
++
++        ObjectGuid guid = player->GetGUID();
++        uint8 arenaslot = ArenaTeam::GetSlotByType(ARENA_TEAM_5v5);
++        uint8 arenatype = ARENA_TYPE_5v5;
++        uint32 arenaRating = 0;
++        uint32 matchmakerRating = 0;
++
++        // ignore if we already in BG or BG queue
++        if (player->InBattleground())
++            return false;
++
++        //check existance
++        Battleground* bg = sBattlegroundMgr->GetBattlegroundTemplate(BATTLEGROUND_AA);
++        if (!bg)
++        {
++            TC_LOG_ERROR("Arena", "Battleground: template bg (all arenas) not found");
++            return false;
++        }
++
++        if (DisableMgr::IsDisabledFor(DISABLE_TYPE_BATTLEGROUND, BATTLEGROUND_AA, NULL))
++        {
++            ChatHandler(player->GetSession()).PSendSysMessage(LANG_ARENA_DISABLED);
++            return false;
++        }
++
++        BattlegroundTypeId bgTypeId = bg->GetTypeID();
++        BattlegroundQueueTypeId bgQueueTypeId = BattlegroundMgr::BGQueueTypeId(bgTypeId, arenatype);
++        PvPDifficultyEntry const* bracketEntry = GetBattlegroundBracketByLevel(bg->GetMapId(), player->getLevel());
++        if (!bracketEntry)
++            return false;
++
++        GroupJoinBattlegroundResult err = ERR_GROUP_JOIN_BATTLEGROUND_FAIL;
++
++        // check if already in queue
++        if (player->GetBattlegroundQueueIndex(bgQueueTypeId) < PLAYER_MAX_BATTLEGROUND_QUEUES)
++            //player is already in this queue
++            return false;
++        // check if has free queue slots
++        if (!player->HasFreeBattlegroundQueueId())
++            return false;
++
++        uint32 ateamId = 0;
++
++        if(isRated)
++        {
++            ateamId = player->GetArenaTeamId(arenaslot);
++            ArenaTeam* at = sArenaTeamMgr->GetArenaTeamById(ateamId);
++            if (!at)
++            {
++                player->GetSession()->SendNotInArenaTeamPacket(arenatype);
++                return false;
++            }
++
++            // get the team rating for queueing
++            arenaRating = at->GetRating();
++            matchmakerRating = arenaRating;
++            // the arenateam id must match for everyone in the group
++
++            if (arenaRating <= 0)
++                arenaRating = 1;
++        }
++
++        BattlegroundQueue &bgQueue = sBattlegroundMgr->GetBattlegroundQueue(bgQueueTypeId);
++        bg->SetRated(isRated);
++
++        GroupQueueInfo* ginfo = bgQueue.AddGroup(player, NULL, bgTypeId, bracketEntry, arenatype, isRated, false, arenaRating, matchmakerRating, ateamId);
++        uint32 avgTime = bgQueue.GetAverageQueueWaitTime(ginfo, bracketEntry->GetBracketId());
++        uint32 queueSlot = player->AddBattlegroundQueueId(bgQueueTypeId);
++
++        WorldPacket data;
++        // send status packet (in queue)
++        sBattlegroundMgr->BuildBattlegroundStatusPacket(&data, bg, queueSlot, STATUS_WAIT_QUEUE, avgTime, 0, arenatype, 0);
++        player->GetSession()->SendPacket(&data);
++
++        sBattlegroundMgr->ScheduleQueueUpdate(matchmakerRating, arenatype, bgQueueTypeId, bgTypeId, bracketEntry->GetBracketId());
++
++        return true;
++    }
++
++
++    bool CreateArenateam(Player* player, Creature* me)
++    {
++        if(!player || !me)
++            return false;
++
++        uint8 slot = ArenaTeam::GetSlotByType(ARENA_TEAM_5v5);
++        if (slot >= MAX_ARENA_SLOT)
++            return false;
++
++        // Check if player is already in an arena team
++        if (player->GetArenaTeamId(slot))
++        {
++            player->GetSession()->SendArenaTeamCommandResult(ERR_ARENA_TEAM_CREATE_S, player->GetName(), "", ERR_ALREADY_IN_ARENA_TEAM);
++            return false;
++        }
++
++
++        // Teamname = playername
++        // if teamname exist, we have to choose another name (playername + number)
++        int i = 1;
++        std::stringstream teamName;
++        teamName << player->GetName();
++        do
++        {
++            if(sArenaTeamMgr->GetArenaTeamByName(teamName.str()) != NULL) // teamname exist, so choose another name
++            {
++                teamName.str(std::string());
++                teamName << player->GetName() << (i++);
++            }
++            else
++                break;
++        } while (i < 100); // should never happen
++
++        // Create arena team
++        ArenaTeam* arenaTeam = new ArenaTeam();
++
++        if (!arenaTeam->Create(player->GetGUID(), ARENA_TEAM_5v5, teamName.str(), 4283124816, 45, 4294242303, 5, 4294705149))
++        {
++            delete arenaTeam;
++            return false;
++        }
++
++        // Register arena team
++        sArenaTeamMgr->AddArenaTeam(arenaTeam);
++        arenaTeam->AddMember(player->GetGUID());
++
++        ChatHandler(player->GetSession()).SendSysMessage("1v1 Arenateam successful created!");
++
++        return true;
++    }
++
++
++    bool OnGossipHello(Player* player, Creature* me)
++    {
++        if(!player || !me)
++            return true;
++
++        if(sWorld->getBoolConfig(CONFIG_ARENA_1V1_ENABLE) == false)
++        {
++            ChatHandler(player->GetSession()).SendSysMessage("1v1 disabled!");
++            return true;
++        }
++
++        if(player->InBattlegroundQueueForBattlegroundQueueType(BATTLEGROUND_QUEUE_5v5))
++                player->ADD_GOSSIP_ITEM_EXTENDED(GOSSIP_ICON_CHAT, "Leave queue 1v1 Arena", GOSSIP_SENDER_MAIN, 3, "Are you sure?", 0, false);
++        else
++            player->ADD_GOSSIP_ITEM(GOSSIP_ICON_CHAT, "Sign up 1v1 Arena (unrated)", GOSSIP_SENDER_MAIN, 20);
++
++        if(player->GetArenaTeamId(ArenaTeam::GetSlotByType(ARENA_TEAM_5v5)) == 0)
++            player->ADD_GOSSIP_ITEM_EXTENDED(GOSSIP_ICON_CHAT, "Create new 1v1 Arenateam", GOSSIP_SENDER_MAIN, 1, "Create 1v1 arenateam?", sWorld->getIntConfig(CONFIG_ARENA_1V1_COSTS), false);
++        else
++        {
++            if(player->InBattlegroundQueueForBattlegroundQueueType(BATTLEGROUND_QUEUE_5v5) == false)
++            {
++                player->ADD_GOSSIP_ITEM(GOSSIP_ICON_CHAT, "Sign up 1v1 Arena (rated)", GOSSIP_SENDER_MAIN, 2);
++                player->ADD_GOSSIP_ITEM_EXTENDED(GOSSIP_ICON_CHAT, "Disband arenateam", GOSSIP_SENDER_MAIN, 5, "Are you sure?", 0, false);
++            }
++
++            player->ADD_GOSSIP_ITEM(GOSSIP_ICON_CHAT, "Show statistics", GOSSIP_SENDER_MAIN, 4);
++        }
++
++        player->ADD_GOSSIP_ITEM(GOSSIP_ICON_CHAT, "Script Info", GOSSIP_SENDER_MAIN, 8);
++        player->SEND_GOSSIP_MENU(68, me->GetGUID());
++        return true;
++    }
++
++
++
++    bool OnGossipSelect(Player* player, Creature* me, uint32 /*uiSender*/, uint32 uiAction)
++    {
++        if(!player || !me)
++            return true;
++
++        player->PlayerTalkClass->ClearMenus();
++
++        switch (uiAction)
++        {
++        case 1: // Create new Arenateam
++            {
++                if(sWorld->getIntConfig(CONFIG_ARENA_1V1_MIN_LEVEL) <= player->getLevel())
++                {
++                    if(player->GetMoney() >= sWorld->getIntConfig(CONFIG_ARENA_1V1_COSTS) && CreateArenateam(player, me))
++                        player->ModifyMoney(sWorld->getIntConfig(CONFIG_ARENA_1V1_COSTS) * -1);
++                }
++                else
++                {
++                    ChatHandler(player->GetSession()).PSendSysMessage("You need level %u+ to create an 1v1 arenateam.", sWorld->getIntConfig(CONFIG_ARENA_1V1_MIN_LEVEL));
++                    player->CLOSE_GOSSIP_MENU();
++                    return true;
++                }
++            }
++            break;
++
++        case 2: // Join Queue Arena (rated)
++            {
++                if(Arena1v1CheckTalents(player) && JoinQueueArena(player, me, true) == false)
++                    ChatHandler(player->GetSession()).SendSysMessage("Something went wrong while join queue.");
++
++                player->CLOSE_GOSSIP_MENU();
++                return true;
++            }
++            break;
++
++        case 20: // Join Queue Arena (unrated)
++            {
++                if(Arena1v1CheckTalents(player) && JoinQueueArena(player, me, false) == false)
++                    ChatHandler(player->GetSession()).SendSysMessage("Something went wrong while join queue.");
++
++                player->CLOSE_GOSSIP_MENU();
++                return true;
++            }
++            break;
++
++        case 3: // Leave Queue
++            {
++                WorldPacket Data;
++                Data << (uint8)0x1 << (uint8)0x0 << (uint32)BATTLEGROUND_AA << (uint16)0x0 << (uint8)0x0;
++                player->GetSession()->HandleBattleFieldPortOpcode(Data);
++                player->CLOSE_GOSSIP_MENU();
++                return true;
++            }
++            break;
++
++        case 4: // get statistics
++            {
++                ArenaTeam* at = sArenaTeamMgr->GetArenaTeamById(player->GetArenaTeamId(ArenaTeam::GetSlotByType(ARENA_TEAM_5v5)));
++                if(at)
++                {
++                    std::stringstream s;
++                    s << "Rating: " << at->GetStats().Rating;
++                    s << "\nRank: " << at->GetStats().Rank;
++                    s << "\nSeason Games: " << at->GetStats().SeasonGames;
++                    s << "\nSeason Wins: " << at->GetStats().SeasonWins;
++                    s << "\nWeek Games: " << at->GetStats().WeekGames;
++                    s << "\nWeek Wins: " << at->GetStats().WeekWins;
++
++                    ChatHandler(player->GetSession()).PSendSysMessage(s.str().c_str());
++                }
++            }
++            break;
++
++
++        case 5: // Disband arenateam
++            {
++                WorldPacket Data;
++                Data << (uint32)player->GetArenaTeamId(ArenaTeam::GetSlotByType(ARENA_TEAM_5v5));
++                player->GetSession()->HandleArenaTeamLeaveOpcode(Data);
++                ChatHandler(player->GetSession()).SendSysMessage("Arenateam deleted!");
++                player->CLOSE_GOSSIP_MENU();
++                return true;
++            }
++            break;
++
++        case 8: // Script Info
++            {
++                player->ADD_GOSSIP_ITEM(GOSSIP_ICON_CHAT, "Developer: Teiby", GOSSIP_SENDER_MAIN, uiAction);
++                player->ADD_GOSSIP_ITEM(GOSSIP_ICON_CHAT, "Website: www.teiby.de", GOSSIP_SENDER_MAIN, uiAction);
++                player->ADD_GOSSIP_ITEM(GOSSIP_ICON_CHAT, "Version: 2.1", GOSSIP_SENDER_MAIN, uiAction);
++                player->ADD_GOSSIP_ITEM(GOSSIP_ICON_CHAT, "<-- Back", GOSSIP_SENDER_MAIN, 7);
++                player->SEND_GOSSIP_MENU(68, me->GetGUID());
++                return true;
++            }
++            break;
++
++        }
++
++        OnGossipHello(player, me);
++        return true;
++    }
++};
++
++
++void AddSC_npc_1v1arena()
++{
++    new npc_1v1arena();
++}
+\ No newline at end of file
+diff --git a/src/server/scripts/Custom/npc_arena1v1.h b/src/server/scripts/Custom/npc_arena1v1.h
+new file mode 100644
+index 0000000..caa75a2
+--- /dev/null
++++ b/src/server/scripts/Custom/npc_arena1v1.h
+@@ -0,0 +1,69 @@
++/*
++ *
++ * Copyright (C) 2013 Emu-Devstore <http://emu-devstore.com/>
++ * Written by Teiby <http://www.teiby.de/>
++ *
++ */
++
++#ifndef ARENA_1V1_H
++#define ARENA_1V1_H
++
++// TalentTab.dbc -> TalentTabID
++const uint32 FORBIDDEN_TALENTS_IN_1V1_ARENA[] =
++{
++    // Healer
++    201, // PriestDiscipline
++    202, // PriestHoly
++    382, // PaladinHoly
++    262, // ShamanRestoration
++    282, // DruidRestoration
++
++    // Tanks
++    //383, // PaladinProtection
++    //163, // WarriorProtection
++
++    0 // End
++};
++
++
++// Return false, if player have invested more than 35 talentpoints in a forbidden talenttree.
++static bool Arena1v1CheckTalents(Player* player)
++{
++    if(!player)
++        return false;
++
++    if(sWorld->getBoolConfig(CONFIG_ARENA_1V1_BLOCK_FORBIDDEN_TALENTS) == false)
++        return true;
++
++    uint32 count = 0;
++    for (uint32 talentId = 0; talentId < sTalentStore.GetNumRows(); ++talentId)
++    {
++        TalentEntry const* talentInfo = sTalentStore.LookupEntry(talentId);
++
++        if (!talentInfo)
++            continue;
++
++        for (int8 rank = MAX_TALENT_RANK-1; rank >= 0; --rank)
++        {
++            if (talentInfo->RankID[rank] == 0)
++                continue;
++
++            if (player->HasTalent(talentInfo->RankID[rank], player->GetActiveSpec()))
++            {
++                for(int8 i = 0; FORBIDDEN_TALENTS_IN_1V1_ARENA[i] != 0; i++)
++                    if(FORBIDDEN_TALENTS_IN_1V1_ARENA[i] == talentInfo->TalentTab)
++                        count += rank + 1;
++            }
++        }
++    }
++
++    if(count >= 36)
++    {
++        ChatHandler(player->GetSession()).SendSysMessage("You can't join, because you have invested too many points in a forbidden talent. Please edit your talents.");
++        return false;
++    }
++    else
++        return true;
++}
++
++#endif
+\ No newline at end of file
+diff --git a/src/server/worldserver/worldserver.conf.dist b/src/server/worldserver/worldserver.conf.dist
+index 43afe08..3af1d13 100644
+--- a/src/server/worldserver/worldserver.conf.dist
++++ b/src/server/worldserver/worldserver.conf.dist
+@@ -2463,6 +2463,71 @@ ArenaLog.ExtendedInfo = 0
+ 
+ #
+ ###################################################################################################
++# 1V1 ARENA CONFIG
++#
++#     Arena.1v1.Enable
++#         Description: Enable the 1v1 arena.
++#         Default:     0 - (Disabled)
++#                      1 - (Enabled)
++
++Arena.1v1.Enable = 1
++
++#
++#    Arena.1v1.Announcer
++#        Description: Announce 1v1 arena queue status to chat.
++#                      Arena.QueueAnnouncer.Enable must be enabled.
++#        Default:     0 - (Disabled)
++#                     1 - (Enabled)
++
++Arena.1v1.Announcer = 0
++
++#
++#    Arena.1v1.MinLevel
++#        Description: Min level to create an arena team
++#        Default:     80
++
++Arena.1v1.MinLevel = 80
++
++#
++#    Arena.1v1.Costs
++#        Description: Costs for create an arena team
++#        Default:     400000 - (40 gold)
++
++Arena.1v1.Costs = 400000
++
++#
++#    Arena.1v1.VendorRating
++#        Description: If true, 1v1 rating will use to calculate highest personal-rating (extended costs).
++#                      Note: The vendor-item will show as not buyable (red), but players can buy it, if enabled and rating is high enough.
++#        Default:     0 - (false)
++#                      1 - (true)
++
++Arena.1v1.VendorRating = 0
++
++#
++#    Arena.1v1.ArenaPointsMulti
++#        Description: An 5v5 arena team with 1500 rating will gain 344 points per week (blizzlike).
++#                      3v3 with same rating will gain 302 points (5v5points * 0.88)
++#                      2v2 will gain 261 points (5v5points * 0.76)
++#                      and 1v1 will gain 167 points (5v5points * 0.64)
++#                      With this multiplier you can modify the arenapoints for 1v1.
++#        Default:     0.64
++
++Arena.1v1.ArenaPointsMulti = 0.64
++
++#
++#    Arena.1v1.BlockForbiddenTalents
++#        Description: If true, healers can't join 1v1 arena, if they invested more than 35 talentpoints in a healing-talenttree.
++#                      You can also block tanks and other talents, if you modify FORBIDDEN_TALENTS_IN_1V1_ARENA in the npc_arena1v1.h file (hardcoding). See TalentTab.dbc for available talents (you will need an DBC-Editor).
++#        Default:     1 - (true)
++#                      0 - (false)
++
++Arena.1v1.BlockForbiddenTalents = 1
++
++#
++###################################################################################################
++
++###################################################################################################
+ 
+ ###################################################################################################
+ # NETWORK CONFIG
+-- 
+2.1.4
+

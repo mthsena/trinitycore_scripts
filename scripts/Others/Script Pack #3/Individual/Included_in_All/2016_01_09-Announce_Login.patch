@@ -1,0 +1,69 @@
+From cfb41dad6455ad2599c85d190d8ec9028ef6f17a Mon Sep 17 00:00:00 2001
+From: LordPsyan <realmsofwarcraft@gmail.com>
+Date: Sat, 9 Jan 2016 10:17:44 -0600
+Subject: [PATCH] 2016_01_09-Announce_Login
+
+---
+ src/server/game/Scripting/ScriptLoader.cpp   |  4 ++--
+ src/server/scripts/Custom/announce_login.cpp | 26 ++++++++++++++++++++++++++
+ 2 files changed, 28 insertions(+), 2 deletions(-)
+ create mode 100644 src/server/scripts/Custom/announce_login.cpp
+
+diff --git a/src/server/game/Scripting/ScriptLoader.cpp b/src/server/game/Scripting/ScriptLoader.cpp
+index 3640ce9..d85ee0d 100644
+--- a/src/server/game/Scripting/ScriptLoader.cpp
++++ b/src/server/game/Scripting/ScriptLoader.cpp
+@@ -1503,7 +1503,7 @@ void AddBattlegroundScripts()
+ // start90
+ // start91
+ // start92
+-// start93
++void AddSC_announce_login();
+ // start94
+ // start95
+ // start96
+@@ -1629,7 +1629,7 @@ void AddCustomScripts()
+ // end90
+ // end91
+ // end92
+-// end93
++    AddSC_announce_login();
+ // end94
+ // end95
+ // end96
+diff --git a/src/server/scripts/Custom/announce_login.cpp b/src/server/scripts/Custom/announce_login.cpp
+new file mode 100644
+index 0000000..e4a8628
+--- /dev/null
++++ b/src/server/scripts/Custom/announce_login.cpp
+@@ -0,0 +1,26 @@
++class announce_login : public PlayerScript
++{
++public:
++	announce_login() : PlayerScript("announce_login") { }
++ 
++	void OnLogin(Player* player, bool /*loginFirst*/)
++	{
++		if (player->GetTeam() == ALLIANCE)
++				{
++			std::ostringstream ss;
++						ss << "|cff3DAEFF[ Login Announcer ]|cffFFD800 : Player|cff4CFF00 " << player->GetName() << " |cffFFD800Has Online. This Player is|cff0026FF Alliance";
++			sWorld->SendServerMessage(SERVER_MSG_STRING, ss.str().c_str());
++				}
++				else
++				{
++			std::ostringstream ss;
++						ss << "|cff3DAEFF[ Login Announcer ]|cffFFD800 : Player|cff4CFF00 " << player->GetName() << " |cffFFD800Has Online. This Player is|cffFF0000 Horde" ;
++			sWorld->SendServerMessage(SERVER_MSG_STRING, ss.str().c_str());
++				}
++		}
++};
++ 
++void AddSC_announce_login()
++{
++	new announce_login;
++}
+\ No newline at end of file
+-- 
+2.1.4
+

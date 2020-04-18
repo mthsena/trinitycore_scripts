@@ -1,0 +1,1 @@
+DELETE FROM creature WHERE guid >= 500000 AND guid <= 500144;

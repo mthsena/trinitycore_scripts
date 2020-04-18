@@ -1,0 +1,156 @@
+diff --git a/src/server/game/Entities/Player/Player.cpp b/src/server/game/Entities/Player/Player.cpp
+index 9ee7bc4..6ff16be 100644
+--- a/src/server/game/Entities/Player/Player.cpp
++++ b/src/server/game/Entities/Player/Player.cpp
+@@ -14358,7 +14358,7 @@ void Player::PrepareGossipMenu(WorldObject* source, uint32 menuId /*= 0*/, bool
+                     break;
+                 case GOSSIP_OPTION_VENDOR:
+                 {
+-                    VendorItemData const* vendorItems = creature->GetVendorItems();
++                    VendorItemData const* vendorItems = itr->second.ActionMenuId ? sObjectMgr->GetNpcVendorItemList(itr->second.ActionMenuId) : creature->GetVendorItems();
+                     if (!vendorItems || vendorItems->Empty())
+                     {
+                         TC_LOG_ERROR("sql.sql", "Creature %s (Entry: %u GUID: %u DB GUID: %u) has UNIT_NPC_FLAG_VENDOR set but has an empty trading item list.", creature->GetName().c_str(), creature->GetEntry(), creature->GetGUIDLow(), creature->GetDBTableGUIDLow());
+@@ -14551,7 +14551,7 @@ void Player::OnGossipSelect(WorldObject* source, uint32 gossipListId, uint32 men
+             break;
+         case GOSSIP_OPTION_VENDOR:
+         case GOSSIP_OPTION_ARMORER:
+-            GetSession()->SendListInventory(guid);
++            GetSession()->SendListInventory(guid, menuItemData->GossipActionMenuId);
+             break;
+         case GOSSIP_OPTION_STABLEPET:
+             GetSession()->SendStablePet(guid);
+@@ -21482,7 +21482,10 @@ bool Player::BuyItemFromVendorSlot(uint64 vendorguid, uint32 vendorslot, uint32
+         return false;
+     }
+ 
+-    VendorItemData const* vItems = creature->GetVendorItems();
++    uint32 currentVendor = GetSession()->GetCurrentVendorEntry();
++    if (currentVendor && creature->GetGUIDLow() != GetSession()->GetCurrentVendorGUID())
++        return false; // Cheating
++    VendorItemData const* vItems = currentVendor ? sObjectMgr->GetNpcVendorItemList(currentVendor) : creature->GetVendorItems();
+     if (!vItems || vItems->Empty())
+     {
+         SendBuyError(BUY_ERR_CANT_FIND_ITEM, creature, item, 0);
+diff --git a/src/server/game/Globals/ObjectMgr.cpp b/src/server/game/Globals/ObjectMgr.cpp
+index 04f3395..25a2244 100644
+--- a/src/server/game/Globals/ObjectMgr.cpp
++++ b/src/server/game/Globals/ObjectMgr.cpp
+@@ -8353,6 +8353,7 @@ bool ObjectMgr::RemoveVendorItem(uint32 entry, uint32 item, bool persist /*= tru
+ 
+ bool ObjectMgr::IsVendorItemValid(uint32 vendor_entry, uint32 item_id, int32 maxcount, uint32 incrtime, uint32 ExtendedCost, Player* player, std::set<uint32>* skip_vendors, uint32 ORnpcflag) const
+ {
++    /*
+     CreatureTemplate const* cInfo = sObjectMgr->GetCreatureTemplate(vendor_entry);
+     if (!cInfo)
+     {
+@@ -8377,6 +8378,7 @@ bool ObjectMgr::IsVendorItemValid(uint32 vendor_entry, uint32 item_id, int32 max
+         }
+         return false;
+     }
++    */
+ 
+     if (!sObjectMgr->GetItemTemplate(item_id))
+     {
+diff --git a/src/server/game/Handlers/ItemHandler.cpp b/src/server/game/Handlers/ItemHandler.cpp
+index 3571410..d965a40 100644
+--- a/src/server/game/Handlers/ItemHandler.cpp
++++ b/src/server/game/Handlers/ItemHandler.cpp
+@@ -717,7 +717,7 @@ void WorldSession::HandleListInventoryOpcode(WorldPacket& recvData)
+     SendListInventory(guid);
+ }
+ 
+-void WorldSession::SendListInventory(uint64 vendorGuid)
++void WorldSession::SendListInventory(uint64 vendorGuid, uint32 vendorEntry)
+ {
+     TC_LOG_DEBUG("network", "WORLD: Sent SMSG_LIST_INVENTORY");
+ 
+@@ -737,7 +737,7 @@ void WorldSession::SendListInventory(uint64 vendorGuid)
+     if (vendor->HasUnitState(UNIT_STATE_MOVING))
+         vendor->StopMoving();
+ 
+-    VendorItemData const* items = vendor->GetVendorItems();
++    VendorItemData const* items = vendorEntry ? sObjectMgr->GetNpcVendorItemList(vendorEntry) : vendor->GetVendorItems();
+     if (!items)
+     {
+         WorldPacket data(SMSG_LIST_INVENTORY, 8 + 1 + 1);
+@@ -748,6 +748,8 @@ void WorldSession::SendListInventory(uint64 vendorGuid)
+         return;
+     }
+ 
++    SetCurrentVendor(vendorEntry, GUID_LOPART(vendorGuid), GUID_HIPART(vendorGuid));
++
+     uint8 itemCount = items->GetItemCount();
+     uint8 count = 0;
+ 
+diff --git a/src/server/game/Server/WorldSession.cpp b/src/server/game/Server/WorldSession.cpp
+index 58e7ba0..45bcac1 100644
+--- a/src/server/game/Server/WorldSession.cpp
++++ b/src/server/game/Server/WorldSession.cpp
+@@ -121,6 +121,7 @@ WorldSession::WorldSession(uint32 id, WorldSocket* sock, AccountTypes sec, uint8
+     recruiterId(recruiter),
+     isRecruiter(isARecruiter),
+     timeLastWhoCommand(0),
++    m_CurrentVendor(0),
+     _RBACData(NULL)
+ {
+     memset(m_Tutorials, 0, sizeof(m_Tutorials));
+diff --git a/src/server/game/Server/WorldSession.h b/src/server/game/Server/WorldSession.h
+index 904006e..f448850 100644
+--- a/src/server/game/Server/WorldSession.h
++++ b/src/server/game/Server/WorldSession.h
+@@ -233,6 +233,13 @@ class WorldSession
+         std::string const& GetPlayerName() const;
+         std::string GetPlayerInfo() const;
+ 
++        uint32 GetCurrentVendorEntry() const { return GUID_ENPART(m_CurrentVendor); }
++        uint32 GetCurrentVendorGUID() const { return GUID_LOPART(m_CurrentVendor); }
++        void SetCurrentVendor(uint32 vendorEntry, uint32 senderGUIDLow, uint32 senderGUIDHigh = HIGHGUID_UNIT)
++        {
++            m_CurrentVendor = MAKE_NEW_GUID(senderGUIDLow, vendorEntry, senderGUIDHigh);
++        }
++
+         uint32 GetGuidLow() const;
+         void SetSecurity(AccountTypes security) { _security = security; }
+         std::string const& GetRemoteAddress() { return m_Address; }
+@@ -273,7 +280,7 @@ class WorldSession
+ 
+         void SendTrainerList(uint64 guid);
+         void SendTrainerList(uint64 guid, std::string const& strTitle);
+-        void SendListInventory(uint64 guid);
++        void SendListInventory(uint64 guid, uint32 vendorEntry = 0);
+         void SendShowBank(uint64 guid);
+         bool CanOpenMailBox(uint64 guid);
+         void SendShowMailBox(uint64 guid);
+@@ -975,6 +982,7 @@ class WorldSession
+         Player* _player;
+         WorldSocket* m_Socket;
+         std::string m_Address;
++        uint64 m_CurrentVendor;
+ 
+         AccountTypes _security;
+         uint32 _accountId;
+diff --git a/src/server/scripts/Commands/cs_npc.cpp b/src/server/scripts/Commands/cs_npc.cpp
+index a5b1330..e75509c 100644
+--- a/src/server/scripts/Commands/cs_npc.cpp
++++ b/src/server/scripts/Commands/cs_npc.cpp
+@@ -330,7 +330,8 @@ public:
+             return false;
+         }
+ 
+-        uint32 vendor_entry = vendor->GetEntry();
++        char* addMulti = strtok(NULL, " ");
++        uint32 vendor_entry = addMulti ? handler->GetSession()->GetCurrentVendorEntry() : vendor ? vendor->GetEntry() : 0;
+ 
+         if (!sObjectMgr->IsVendorItemValid(vendor_entry, itemId, maxcount, incrtime, extendedcost, handler->GetSession()->GetPlayer()))
+         {
+@@ -553,7 +554,8 @@ public:
+         }
+         uint32 itemId = atol(pitem);
+ 
+-        if (!sObjectMgr->RemoveVendorItem(vendor->GetEntry(), itemId))
++        char* addMulti = strtok(NULL, " ");
++        if (!sObjectMgr->RemoveVendorItem(addMulti ? handler->GetSession()->GetCurrentVendorEntry() : vendor->GetEntry(), itemId))
+         {
+             handler->PSendSysMessage(LANG_ITEM_NOT_IN_LIST, itemId);
+             handler->SetSentErrorMessage(true);

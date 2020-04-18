@@ -1,0 +1,42 @@
+From 8fa9b613dd57209c26c3f6df8a765dd51af69622 Mon Sep 17 00:00:00 2001
+From: Vstar <vstar0v0@hotmail.com>
+Date: Sun, 10 Nov 2013 01:44:19 +0800
+Subject: [PATCH 1/2] Fixed pet follow
+
+---
+ .../MovementGenerators/TargetedMovementGenerator.cpp         | 12 +++++++++---
+ 1 file changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/src/server/game/Movement/MovementGenerators/TargetedMovementGenerator.cpp b/src/server/game/Movement/MovementGenerators/TargetedMovementGenerator.cpp
+index f71eddd..ec3c6d3 100644
+--- a/src/server/game/Movement/MovementGenerators/TargetedMovementGenerator.cpp
++++ b/src/server/game/Movement/MovementGenerators/TargetedMovementGenerator.cpp
+@@ -60,8 +60,8 @@ void TargetedMovementGeneratorMedium<T, D>::_setTargetLocation(T* owner, bool up
+             //   doing a "dance" while fighting
+             if (owner->IsPet() && i_target->GetTypeId() == TYPEID_PLAYER)
+             {
+-                dist = i_target->GetCombatReach();
+-                size = i_target->GetCombatReach() - i_target->GetObjectSize();
++                dist = 1.0f; //i_target->GetCombatReach();
++                size = 1.0f; //i_target->GetCombatReach() - i_target->GetObjectSize();
+             }
+             else
+             {
+@@ -152,7 +152,13 @@ bool TargetedMovementGeneratorMedium<T, D>::DoUpdate(T* owner, uint32 time_diff)
+     {
+         i_recheckDistance.Reset(100);
+         //More distance let have better performance, less distance let have more sensitive reaction at target move.
+-        float allowed_dist = owner->GetCombatReach() + sWorld->getRate(RATE_TARGET_POS_RECALCULATION_RANGE);
++        float allowed_dist = 0.0f;
++
++        if ((owner->GetTypeId() == TYPEID_UNIT && owner->IsPet()) && (owner->GetCharmerOrOwnerGUID() == i_target->GetGUID()))
++            allowed_dist = 1.0f; // pet following owner
++        else
++            allowed_dist = owner->GetCombatReach() + sWorld->getRate(RATE_TARGET_POS_RECALCULATION_RANGE);
++
+         G3D::Vector3 dest = owner->movespline->FinalDestination();
+ 
+         if (owner->GetTypeId() == TYPEID_UNIT && owner->ToCreature()->CanFly())
+-- 
+1.8.3.msysgit.0
+

@@ -1,0 +1,13 @@
+diff --git a/src/server/game/Entities/Object/Object.cpp b/src/server/game/Entities/Object/Object.cpp
+index 83d192e..e8de132 100644
+--- a/src/server/game/Entities/Object/Object.cpp
++++ b/src/server/game/Entities/Object/Object.cpp
+@@ -1130,6 +1130,8 @@ void Object::ApplyPercentModFloatValue(uint16 index, float val, bool apply)
+ {
+     float value = GetFloatValue(index);
+     ApplyPercentModFloatVar(value, val, apply);
++	if(apply && index == CR_HASTE_SPELL && value > 50)
++		value = 50;
+     SetFloatValue(index, value);
+ }
+ 

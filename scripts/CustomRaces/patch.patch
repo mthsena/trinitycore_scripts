@@ -1,0 +1,110 @@
+diff --git a/src/server/game/Entities/GameObject/GameObject.cpp b/src/server/game/Entities/GameObject/GameObject.cpp
+index a4b140b..d63d26a 100644
+--- a/src/server/game/Entities/GameObject/GameObject.cpp
++++ b/src/server/game/Entities/GameObject/GameObject.cpp
+@@ -1728,6 +1728,12 @@ void GameObject::Use(Unit* user)
+ 
+             Player* player = user->ToPlayer();
+ 
++            if (player->getRace() == RACE_GOBLIN || player->getRace() == RACE_WORGEN)
++            {
++                player->GetSession()->SendNotification("Goblins/Worgens can't use the BarberShop.");
++                return;
++            }
++
+             // fallback, will always work
+             player->TeleportTo(GetMapId(), GetPositionX(), GetPositionY(), GetPositionZ(), GetOrientation(), TELE_TO_NOT_LEAVE_TRANSPORT | TELE_TO_NOT_LEAVE_COMBAT | TELE_TO_NOT_UNSUMMON_PET);
+ 
+diff --git a/src/server/game/Entities/Player/Player.cpp b/src/server/game/Entities/Player/Player.cpp
+index 275dbf9..30c7473 100644
+--- a/src/server/game/Entities/Player/Player.cpp
++++ b/src/server/game/Entities/Player/Player.cpp
+@@ -26505,6 +26505,9 @@ void Player::SendSupercededSpell(uint32 oldSpell, uint32 newSpell)
+ 
+ bool Player::ValidateAppearance(uint8 race, uint8 class_, uint8 gender, uint8 hairID, uint8 hairColor, uint8 faceID, uint8 facialHair, uint8 skinColor, bool create /*=false*/)
+ {
++    if (race == RACE_WORGEN || race == RACE_GOBLIN)
++        return true;
++
+     // Check skin color
+     // For Skin type is always 0
+     if (CharSectionsEntry const* entry = GetCharSectionEntry(race, SECTION_TYPE_SKIN, gender, 0, skinColor))
+diff --git a/src/server/game/Handlers/CharacterHandler.cpp b/src/server/game/Handlers/CharacterHandler.cpp
+index 9cb9077..b7d468b 100644
+--- a/src/server/game/Handlers/CharacterHandler.cpp
++++ b/src/server/game/Handlers/CharacterHandler.cpp
+@@ -1602,6 +1602,16 @@ void WorldSession::HandleCharFactionOrRaceChange(WorldPacket& recvData)
+     uint8 playerClass = nameData->m_class;
+     uint8 level = nameData->m_level;
+ 
++    /* Prevent bug with missing models */
++    if (factionChangeInfo.Race == RACE_GOBLIN || factionChangeInfo.Race == RACE_WORGEN)
++    {
++        factionChangeInfo.Skin = urand(1, 3);
++        factionChangeInfo.HairColor = urand(1, 3);
++        factionChangeInfo.HairStyle = urand(1, 3);
++        factionChangeInfo.FacialHair = urand(1, 3);
++        factionChangeInfo.Face = urand(1, 3);
++    }
++
+     // TO Do: Make async
+     PreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_SEL_CHAR_AT_LOGIN_TITLES);
+     stmt->setUInt32(0, lowGuid);
+@@ -1704,6 +1714,7 @@ void WorldSession::HandleCharFactionOrRaceChange(WorldPacket& recvData)
+             case RACE_UNDEAD_PLAYER:
+             case RACE_TROLL:
+             case RACE_BLOODELF:
++            case RACE_GOBLIN:
+                 team = TEAM_HORDE;
+                 break;
+             default:
+@@ -1729,7 +1740,7 @@ void WorldSession::HandleCharFactionOrRaceChange(WorldPacket& recvData)
+         trans->Append(stmt);
+ 
+         // Race specific languages
+-        if (factionChangeInfo.Race != RACE_ORC && factionChangeInfo.Race != RACE_HUMAN)
++        if (factionChangeInfo.Race != RACE_ORC && factionChangeInfo.Race != RACE_HUMAN && factionChangeInfo.Race != RACE_GOBLIN && factionChangeInfo.Race != RACE_WORGEN)
+         {
+             stmt = CharacterDatabase.GetPreparedStatement(CHAR_INS_CHAR_SKILL_LANGUAGE);
+             stmt->setUInt32(0, lowGuid);
+diff --git a/src/server/game/Miscellaneous/SharedDefines.h b/src/server/game/Miscellaneous/SharedDefines.h
+index 06c58a4..46d5cf0 100644
+--- a/src/server/game/Miscellaneous/SharedDefines.h
++++ b/src/server/game/Miscellaneous/SharedDefines.h
+@@ -72,10 +72,10 @@ enum Races
+     RACE_TAUREN             = 6,
+     RACE_GNOME              = 7,
+     RACE_TROLL              = 8,
+-    //RACE_GOBLIN             = 9,
++    RACE_GOBLIN             = 9,
+     RACE_BLOODELF           = 10,
+-    RACE_DRAENEI            = 11
+-    //RACE_FEL_ORC            = 12,
++    RACE_DRAENEI            = 11,
++    RACE_WORGEN             = 12,
+     //RACE_NAGA               = 13,
+     //RACE_BROKEN             = 14,
+     //RACE_SKELETON           = 15,
+@@ -88,17 +88,17 @@ enum Races
+ };
+ 
+ // max+1 for player race
+-#define MAX_RACES         12
++#define MAX_RACES         13
+ 
+ #define RACEMASK_ALL_PLAYABLE \
+     ((1<<(RACE_HUMAN-1))   |(1<<(RACE_ORC-1))          |(1<<(RACE_DWARF-1))   | \
+      (1<<(RACE_NIGHTELF-1))|(1<<(RACE_UNDEAD_PLAYER-1))|(1<<(RACE_TAUREN-1))  | \
+-     (1<<(RACE_GNOME-1))   |(1<<(RACE_TROLL-1))        |(1<<(RACE_BLOODELF-1))| \
+-     (1<<(RACE_DRAENEI-1)))
++     (1<<(RACE_GNOME-1))   |(1<<(RACE_TROLL-1))        |(1<<(RACE_GOBLIN-1))| \
++     (1<<(RACE_BLOODELF-1))|(1<<(RACE_DRAENEI-1))      |(1<<(RACE_WORGEN-1)))
+ 
+ #define RACEMASK_ALLIANCE \
+-    ((1<<(RACE_HUMAN-1)) | (1<<(RACE_DWARF-1)) | (1<<(RACE_NIGHTELF-1)) | \
+-     (1<<(RACE_GNOME-1)) | (1<<(RACE_DRAENEI-1)))
++    ((1<<(RACE_HUMAN-1)) | (1<<(RACE_DWARF-1))   | (1<<(RACE_NIGHTELF-1)) | \
++     (1<<(RACE_GNOME-1)) | (1<<(RACE_DRAENEI-1)) | (1<<(RACE_WORGEN-1)))
+ 
+ #define RACEMASK_HORDE RACEMASK_ALL_PLAYABLE & ~RACEMASK_ALLIANCE
+ 

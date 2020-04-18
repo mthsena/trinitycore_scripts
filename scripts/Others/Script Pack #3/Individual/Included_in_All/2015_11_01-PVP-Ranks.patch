@@ -1,0 +1,241 @@
+From bdb9f302ffc14eb1302c2cf2a4dc6d3116046647 Mon Sep 17 00:00:00 2001
+From: LordPsyan <realmsofwarcraft@gmail.com>
+Date: Sun, 1 Nov 2015 10:51:54 -0600
+Subject: [PATCH] 2015_11_01-PVP-Ranks
+
+---
+ src/server/game/Entities/Player/Player.cpp | 81 ++++++++++++++++++++++++++----
+ src/server/game/Entities/Player/Player.h   | 22 ++++++++
+ src/server/game/World/World.cpp            | 12 +++++
+ src/server/game/World/World.h              | 23 +++++++++
+ 4 files changed, 129 insertions(+), 9 deletions(-)
+
+diff --git a/src/server/game/Entities/Player/Player.cpp b/src/server/game/Entities/Player/Player.cpp
+index abe098b..fbe01fc 100644
+--- a/src/server/game/Entities/Player/Player.cpp
++++ b/src/server/game/Entities/Player/Player.cpp
+@@ -7099,6 +7099,7 @@ bool Player::RewardHonor(Unit* victim, uint32 groupsize, int32 honor, bool pvpto
+ 
+     ObjectGuid victim_guid;
+     uint32 victim_rank = 0;
++    uint32 rank_diff = 0;
+ 
+     // need call before fields update to have chance move yesterday data to appropriate fields before today data change.
+     UpdateHonorFields();
+@@ -7141,17 +7142,54 @@ bool Player::RewardHonor(Unit* victim, uint32 groupsize, int32 honor, bool pvpto
+             //  title[1..14]  -> rank[5..18]
+             //  title[15..28] -> rank[5..18]
+             //  title[other]  -> 0
+-            if (victim_title == 0)
+-                victim_guid.Clear();                     // Don't show HK: <rank> message, only log.
+-            else if (victim_title < 15)
+-                victim_rank = victim_title + 4;
+-            else if (victim_title < 29)
+-                victim_rank = victim_title - 14 + 4;
+-            else
+-                victim_guid.Clear();                     // Don't show HK: <rank> message, only log.
++                // PLAYER__FIELD_KNOWN_TITLES describe which titles player can use,
++                // so we must find biggest pvp title , even for killer to find extra honor value
++                uint32 vtitle = victim->GetUInt32Value(PLAYER__FIELD_KNOWN_TITLES);
++                //uint32 victim_title = 0;
++                uint32 ktitle = GetUInt32Value(PLAYER__FIELD_KNOWN_TITLES);
++                uint32 killer_title = 0;
++                if (PLAYER_TITLE_MASK_ALL_PVP & ktitle)
++                {
++                    for (int i = ((GetTeam() == ALLIANCE) ? 1:HKRANKMAX);i!=((GetTeam() == ALLIANCE) ? HKRANKMAX : (2*HKRANKMAX-1));i++)
++                    {
++                        if (ktitle & (1<<i))
++                            killer_title = i;
++                    }
++                }
++                if (PLAYER_TITLE_MASK_ALL_PVP & vtitle)
++                {
++                    for (int i = ((plrVictim->GetTeam() == ALLIANCE) ? 1:HKRANKMAX);i!=((plrVictim->GetTeam() == ALLIANCE) ? HKRANKMAX : (2*HKRANKMAX-1));i++)
++                    {
++                        if (vtitle & (1<<i))
++                            victim_title = i;
++                    }
++                }
++
++                // Get Killer titles, CharTitlesEntry::bit_index
++                // Ranks:
++                //  title[1..14]  -> rank[5..18]
++                //  title[15..28] -> rank[5..18]
++                //  title[other]  -> 0
++                if (victim_title == 0)
++                    victim_guid.Clear();                        // Don't show HK: <rank> message, only log.
++                else if (victim_title < HKRANKMAX)
++                    victim_rank = victim_title + 4;
++                else if (victim_title < (2*HKRANKMAX-1))
++                    victim_rank = victim_title - (HKRANKMAX-1) + 4;
++                else
++                    victim_guid.Clear();                        // Don't show HK: <rank> message, only log.
+ 
+-            honor_f = std::ceil(Trinity::Honor::hk_honor_at_level_f(k_level) * (v_level - k_grey) / (k_level - k_grey));
++                // now find rank difference
++                if (killer_title == 0 && victim_rank>4)
++                    rank_diff = victim_rank - 4;
++                else if (killer_title < HKRANKMAX)
++                    rank_diff = (victim_rank>(killer_title + 4))? (victim_rank - (killer_title + 4)) : 0;
++                else if (killer_title < (2*HKRANKMAX-1))
++                    rank_diff = (victim_rank>(killer_title - (HKRANKMAX-1) +4))? (victim_rank - (killer_title - (HKRANKMAX-1) + 4)) : 0;
+ 
++
++            honor_f = ceil(Trinity::Honor::hk_honor_at_level_f(k_level) * (v_level - k_grey) / (k_level - k_grey));
++            honor *= 1 + sWorld->getRate(RATE_PVP_RANK_EXTRA_HONOR)*(((float)rank_diff) / 10.0f);
+             // count the number of playerkills in one day
+             ApplyModUInt32Value(PLAYER_FIELD_KILLS, 1, true);
+             // and those in a lifetime
+@@ -7159,6 +7197,7 @@ bool Player::RewardHonor(Unit* victim, uint32 groupsize, int32 honor, bool pvpto
+             UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_EARN_HONORABLE_KILL);
+             UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_HK_CLASS, victim->getClass());
+             UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_HK_RACE, victim->getRace());
++            UpdateKnownTitles();
+             UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_HONORABLE_KILL_AT_AREA, GetAreaId());
+             UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_HONORABLE_KILL, 1, 0, victim);
+         }
+@@ -7276,6 +7315,30 @@ void Player::SetArenaPoints(uint32 value)
+         AddKnownCurrency(ITEM_ARENA_POINTS_ID);
+ }
+ 
++void Player::UpdateKnownTitles()
++{
++    uint32 new_title = 0;
++    uint32 honor_kills = GetUInt32Value(PLAYER_FIELD_LIFETIME_HONORABLE_KILLS);
++    uint32 old_title = GetUInt32Value(PLAYER_CHOSEN_TITLE);
++    RemoveFlag64(PLAYER__FIELD_KNOWN_TITLES,PLAYER_TITLE_MASK_ALL_PVP);
++    // if (honor_kills < 0)
++    //    return;
++    bool max_rank = ((honor_kills >= sWorld->pvp_ranks[HKRANKMAX-1]) ? true : false);
++    for (int i = HKRANK01; i != HKRANKMAX; ++i)
++    {
++        if (honor_kills < sWorld->pvp_ranks[i] || (max_rank))
++        {
++            new_title = ((max_rank) ? (HKRANKMAX-1) : (i-1));
++            if (new_title > 0)
++                new_title += ((GetTeam() == ALLIANCE) ? 0 : (HKRANKMAX-1));
++            break;
++        }
++    }
++    SetFlag64(PLAYER__FIELD_KNOWN_TITLES,uint64(1) << new_title);
++    if (old_title > 0 && old_title < (2*HKRANKMAX-1) && new_title > old_title)
++        SetUInt32Value(PLAYER_CHOSEN_TITLE,new_title);
++}
++
+ void Player::ModifyHonorPoints(int32 value, SQLTransaction trans)
+ {
+     int32 newValue = int32(GetHonorPoints()) + value;
+diff --git a/src/server/game/Entities/Player/Player.h b/src/server/game/Entities/Player/Player.h
+index 166b5c4..5ada2c6 100644
+--- a/src/server/game/Entities/Player/Player.h
++++ b/src/server/game/Entities/Player/Player.h
+@@ -413,6 +413,27 @@ enum PlayerFlags
+     PLAYER_FLAGS_UNK31             = 0x80000000
+ };
+ 
++#define PLAYER_TITLE_MASK_ALLIANCE_PVP             \
++    (PLAYER_TITLE_PRIVATE | PLAYER_TITLE_CORPORAL |  \
++      PLAYER_TITLE_SERGEANT_A | PLAYER_TITLE_MASTER_SERGEANT | \
++      PLAYER_TITLE_SERGEANT_MAJOR | PLAYER_TITLE_KNIGHT | \
++      PLAYER_TITLE_KNIGHT_LIEUTENANT | PLAYER_TITLE_KNIGHT_CAPTAIN | \
++      PLAYER_TITLE_KNIGHT_CHAMPION | PLAYER_TITLE_LIEUTENANT_COMMANDER | \
++      PLAYER_TITLE_COMMANDER | PLAYER_TITLE_MARSHAL | \
++      PLAYER_TITLE_FIELD_MARSHAL | PLAYER_TITLE_GRAND_MARSHAL)
++
++#define PLAYER_TITLE_MASK_HORDE_PVP                           \
++    (PLAYER_TITLE_SCOUT | PLAYER_TITLE_GRUNT |  \
++      PLAYER_TITLE_SERGEANT_H | PLAYER_TITLE_SENIOR_SERGEANT | \
++      PLAYER_TITLE_FIRST_SERGEANT | PLAYER_TITLE_STONE_GUARD | \
++      PLAYER_TITLE_BLOOD_GUARD | PLAYER_TITLE_LEGIONNAIRE | \
++      PLAYER_TITLE_CENTURION | PLAYER_TITLE_CHAMPION | \
++      PLAYER_TITLE_LIEUTENANT_GENERAL | PLAYER_TITLE_GENERAL | \
++      PLAYER_TITLE_WARLORD | PLAYER_TITLE_HIGH_WARLORD)
++
++#define PLAYER_TITLE_MASK_ALL_PVP  \
++    (PLAYER_TITLE_MASK_ALLIANCE_PVP | PLAYER_TITLE_MASK_HORDE_PVP)
++
+ // used for PLAYER__FIELD_KNOWN_TITLES field (uint64), (1<<bit_index) without (-1)
+ // can't use enum for uint64 values
+ #define PLAYER_TITLE_DISABLED              UI64LIT(0x0000000000000000)
+@@ -1944,6 +1965,7 @@ class Player : public Unit, public GridObject<Player>
+         void ModifyHonorPoints(int32 value, SQLTransaction trans = SQLTransaction(nullptr));      //! If trans is specified, honor save query will be added to trans
+         void ModifyArenaPoints(int32 value, SQLTransaction trans = SQLTransaction(nullptr));      //! If trans is specified, arena point save query will be added to trans
+         uint32 GetMaxPersonalArenaRatingRequirement(uint32 minarenaslot) const;
++        void UpdateKnownTitles();
+         void SetHonorPoints(uint32 value);
+         void SetArenaPoints(uint32 value);
+ 
+diff --git a/src/server/game/World/World.cpp b/src/server/game/World/World.cpp
+index 17ea868..f475f40 100644
+--- a/src/server/game/World/World.cpp
++++ b/src/server/game/World/World.cpp
+@@ -869,6 +869,18 @@ void World::LoadConfigSettings(bool reload)
+         TC_LOG_ERROR("server.loading", "MinPetitionSigns (%i) must be in range 0..9. Set to 9.", m_int_configs[CONFIG_MIN_PETITION_SIGNS]);
+         m_int_configs[CONFIG_MIN_PETITION_SIGNS] = 9;
+     }
++    rate_values[RATE_PVP_RANK_EXTRA_HONOR] = sConfigMgr->GetFloatDefault("PvPRank.Rate.ExtraHonor", 1);
++    std::string s_pvp_ranks = sConfigMgr->GetStringDefault("PvPRank.HKPerRank", "10,50,100,200,450,750,1300,2000,3500,6000,9500,15000,21000,30000");
++    char *c_pvp_ranks = const_cast<char*>(s_pvp_ranks.c_str());
++    for (int i = 0; i !=HKRANKMAX; i++)
++    {
++        if (i==0)
++            pvp_ranks[0] = 0;
++        else if (i==1)
++            pvp_ranks[1] = atoi(strtok (c_pvp_ranks, ","));
++        else
++            pvp_ranks[i] = atoi(strtok (NULL, ","));
++    }
+ 
+     m_int_configs[CONFIG_GM_LOGIN_STATE]        = sConfigMgr->GetIntDefault("GM.LoginState", 2);
+     m_int_configs[CONFIG_GM_VISIBLE_STATE]      = sConfigMgr->GetIntDefault("GM.Visible", 2);
+diff --git a/src/server/game/World/World.h b/src/server/game/World/World.h
+index ccea34e..ce69287 100644
+--- a/src/server/game/World/World.h
++++ b/src/server/game/World/World.h
+@@ -503,6 +503,7 @@ enum Rates
+     RATE_CORPSE_DECAY_LOOTED,
+     RATE_INSTANCE_RESET_TIME,
+     RATE_TARGET_POS_RECALCULATION_RANGE,
++    RATE_PVP_RANK_EXTRA_HONOR,
+     RATE_DURABILITY_LOSS_ON_DEATH,
+     RATE_DURABILITY_LOSS_DAMAGE,
+     RATE_DURABILITY_LOSS_PARRY,
+@@ -514,6 +515,26 @@ enum Rates
+     MAX_RATES
+ };
+ 
++enum HonorKillPvPRank
++{
++    HKRANK00,
++    HKRANK01,
++    HKRANK02,
++    HKRANK03,
++    HKRANK04,
++    HKRANK05,
++    HKRANK06,
++    HKRANK07,
++    HKRANK08,
++    HKRANK09,
++    HKRANK10,
++    HKRANK11,
++    HKRANK12,
++    HKRANK13,
++    HKRANK14,
++    HKRANKMAX
++};
++
+ /// Can be used in SMSG_AUTH_RESPONSE packet
+ enum BillingPlanFlags
+ {
+@@ -742,6 +763,8 @@ class World
+         bool SendZoneMessage(uint32 zone, WorldPacket* packet, WorldSession* self = nullptr, uint32 team = 0);
+         void SendZoneText(uint32 zone, const char *text, WorldSession* self = nullptr, uint32 team = 0);
+ 
++        uint32 pvp_ranks[HKRANKMAX];
++
+         /// Are we in the middle of a shutdown?
+         bool IsShuttingDown() const { return m_ShutdownTimer > 0; }
+         uint32 GetShutDownTimeLeft() const { return m_ShutdownTimer; }
+-- 
+2.1.4
+

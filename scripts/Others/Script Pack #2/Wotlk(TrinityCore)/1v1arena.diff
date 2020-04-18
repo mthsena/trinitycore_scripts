@@ -1,0 +1,467 @@
+/* 1v1 Rated Arena by: Teiby
+Share [SymbolixDEV]
+*/
+
+diff --git a/sql/custom/world/1v1 arena.sql b/sql/custom/world/1v1 arena.sql
+new file mode 100644
+index 0000000..5b240eb
+--- /dev/null
++++ b/sql/custom/world/1v1 arena.sql	
+@@ -0,0 +1 @@
++REPLACE INTO `creature_template` VALUES (190016, 0, 0, 0, 0, 0, 29348, 0, 0, 0, '1v1 Rated Arena', 'Arena-Gaming', 'Speak', 50001, 71, 71, 2, 35, 35, 3, 1, 1.14286, 1.25, 1, 124, 256, 0, 783, 1, 2000, 0, 1, 2, 2048, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 138936390, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 168000, 190000, '', 0, 3, 1, 1.56, 1.56, 1.56, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 'npc_1v1arena', 12340);
+\ No newline at end of file
+diff --git a/src/server/game/Battlegrounds/ArenaTeam.cpp b/src/server/game/Battlegrounds/ArenaTeam.cpp
+index 9430989..e546cbb 100644
+--- a/src/server/game/Battlegrounds/ArenaTeam.cpp
++++ b/src/server/game/Battlegrounds/ArenaTeam.cpp
+@@ -571,9 +571,10 @@ uint8 ArenaTeam::GetSlotByType(uint32 type)
+ {
+     switch (type)
+     {
+-        case ARENA_TEAM_2v2: return 0;
++		case ARENA_TEAM_2v2: return 0;
+         case ARENA_TEAM_3v3: return 1;
+         case ARENA_TEAM_5v5: return 2;
++		case ARENA_TEAM_1v1: return 3; // Custom 1v1 Arena Rated
+         default:
+             break;
+     }
+@@ -610,6 +611,8 @@ uint32 ArenaTeam::GetPoints(uint32 memberRating)
+         points *= 0.75f;
+     else if (Type == ARENA_TEAM_3v3)
+         points *= 0.90f;
++	else if (Type == ARENA_TEAM_1v1) //Custom 1v1 Arena Rated
++        points *= 0.70f;
+ 
+ 		
+     return (uint32) points;
+diff --git a/src/server/game/Battlegrounds/ArenaTeam.h b/src/server/game/Battlegrounds/ArenaTeam.h
+index 0d37351..dc68409 100644
+--- a/src/server/game/Battlegrounds/ArenaTeam.h
++++ b/src/server/game/Battlegrounds/ArenaTeam.h
+@@ -80,6 +80,7 @@ enum ArenaTeamEvents
+ 
+ enum ArenaTeamTypes
+ {
++	ARENA_TEAM_1v1		= 1, //Custom 1v1 Rated Arena
+     ARENA_TEAM_2v2      = 2,
+     ARENA_TEAM_3v3      = 3,
+     ARENA_TEAM_5v5      = 5
+@@ -111,7 +112,7 @@ struct ArenaTeamStats
+     uint32 Rank;
+ };
+ 
+-#define MAX_ARENA_SLOT 3                                    // 0..2 slots
++#define MAX_ARENA_SLOT 4                                    // 0..3 slots
+ 
+ class ArenaTeam
+ {
+diff --git a/src/server/game/Battlegrounds/Battleground.cpp b/src/server/game/Battlegrounds/Battleground.cpp
+index eac382c..740fd37 100644
+--- a/src/server/game/Battlegrounds/Battleground.cpp
++++ b/src/server/game/Battlegrounds/Battleground.cpp
+@@ -491,6 +491,9 @@ inline void Battleground::_ProcessJoin(uint32 diff)
+         // First start warning - 2 or 1 minute
+         SendMessageToAll(StartMessageIds[BG_STARTING_EVENT_FIRST], CHAT_MSG_BG_SYSTEM_NEUTRAL);
+     }
++	 // 1v1 Arena - Start arena after 15s, when all players are in arena
++        if(GetArenaType() == ARENA_TYPE_1v1 && GetStartDelayTime() > StartDelayTimes[BG_STARTING_EVENT_THIRD] && (m_PlayersCount[0] + m_PlayersCount[1]) == 2)
++                SetStartDelayTime(StartDelayTimes[BG_STARTING_EVENT_THIRD]);
+     // After 1 minute or 30 seconds, warning is signaled
+     else if (GetStartDelayTime() <= StartDelayTimes[BG_STARTING_EVENT_SECOND] && !(m_Events & BG_STARTING_EVENT_2))
+     {
+diff --git a/src/server/game/Battlegrounds/Battleground.h b/src/server/game/Battlegrounds/Battleground.h
+index 1074d06..985e90e 100644
+--- a/src/server/game/Battlegrounds/Battleground.h
++++ b/src/server/game/Battlegrounds/Battleground.h
+@@ -201,6 +201,7 @@ enum ScoreType
+ 
+ enum ArenaType
+ {
++	ARENA_TYPE_1v1			= 1,
+     ARENA_TYPE_2v2          = 2,
+     ARENA_TYPE_3v3          = 3,
+     ARENA_TYPE_5v5          = 5
+diff --git a/src/server/game/Battlegrounds/BattlegroundMgr.cpp b/src/server/game/Battlegrounds/BattlegroundMgr.cpp
+index 4d53d51..ea086d6 100644
+--- a/src/server/game/Battlegrounds/BattlegroundMgr.cpp
++++ b/src/server/game/Battlegrounds/BattlegroundMgr.cpp
+@@ -134,7 +134,7 @@ void BattlegroundMgr::Update(uint32 diff)
+         {
+             // forced update for rated arenas (scan all, but skipped non rated)
+             TC_LOG_TRACE(LOG_FILTER_ARENAS, "BattlegroundMgr: UPDATING ARENA QUEUES");
+-            for (int qtype = BATTLEGROUND_QUEUE_2v2; qtype <= BATTLEGROUND_QUEUE_5v5; ++qtype)
++            for (int qtype = BATTLEGROUND_QUEUE_2v2; qtype <= BATTLEGROUND_QUEUE_1v1; ++qtype)
+                 for (int bracket = BG_BRACKET_ID_FIRST; bracket < MAX_BATTLEGROUND_BRACKETS; ++bracket)
+                     m_BattlegroundQueues[qtype].BattlegroundQueueUpdate(diff,
+                         BATTLEGROUND_AA, BattlegroundBracketId(bracket),
+@@ -608,6 +608,9 @@ Battleground* BattlegroundMgr::CreateNewBattleground(BattlegroundTypeId original
+             case ARENA_TYPE_5v5:
+                 maxPlayersPerTeam = 5;
+                 break;
++				case ARENA_TYPE_1v1:
++                maxPlayersPerTeam = 1;
++                break;
+         }
+ 
+         bg->SetMaxPlayersPerTeam(maxPlayersPerTeam);
+@@ -991,6 +994,8 @@ BattlegroundQueueTypeId BattlegroundMgr::BGQueueTypeId(BattlegroundTypeId bgType
+                     return BATTLEGROUND_QUEUE_3v3;
+                 case ARENA_TYPE_5v5:
+                     return BATTLEGROUND_QUEUE_5v5;
++					case ARENA_TYPE_1v1:
++                    return BATTLEGROUND_QUEUE_1v1;
+                 default:
+                     return BATTLEGROUND_QUEUE_NONE;
+             }
+@@ -1020,6 +1025,7 @@ BattlegroundTypeId BattlegroundMgr::BGTemplateId(BattlegroundQueueTypeId bgQueue
+         case BATTLEGROUND_QUEUE_2v2:
+         case BATTLEGROUND_QUEUE_3v3:
+         case BATTLEGROUND_QUEUE_5v5:
++		case BATTLEGROUND_QUEUE_1v1:
+             return BATTLEGROUND_AA;
+         default:
+             return BattlegroundTypeId(0);                   // used for unknown template (it existed and do nothing)
+@@ -1036,6 +1042,8 @@ uint8 BattlegroundMgr::BGArenaType(BattlegroundQueueTypeId bgQueueTypeId)
+             return ARENA_TYPE_3v3;
+         case BATTLEGROUND_QUEUE_5v5:
+             return ARENA_TYPE_5v5;
++			case BATTLEGROUND_QUEUE_1v1:
++            return ARENA_TYPE_1v1;
+         default:
+             return 0;
+     }
+diff --git a/src/server/game/Entities/Object/Updates/UpdateFields.h b/src/server/game/Entities/Object/Updates/UpdateFields.h
+index 9e659c0..3ffcf0f 100644
+--- a/src/server/game/Entities/Object/Updates/UpdateFields.h
++++ b/src/server/game/Entities/Object/Updates/UpdateFields.h
+@@ -379,18 +379,18 @@ enum EUnitFields
+     PLAYER_FIELD_BYTES2                       = UNIT_END + 0x0439, // Size: 1, Type: 6, Flags: PRIVATE
+     PLAYER_FIELD_WATCHED_FACTION_INDEX        = UNIT_END + 0x043A, // Size: 1, Type: INT, Flags: PRIVATE
+     PLAYER_FIELD_COMBAT_RATING_1              = UNIT_END + 0x043B, // Size: 25, Type: INT, Flags: PRIVATE
+-    PLAYER_FIELD_ARENA_TEAM_INFO_1_1          = UNIT_END + 0x0454, // Size: 21, Type: INT, Flags: PRIVATE
+-    PLAYER_FIELD_HONOR_CURRENCY               = UNIT_END + 0x0469, // Size: 1, Type: INT, Flags: PRIVATE
+-    PLAYER_FIELD_ARENA_CURRENCY               = UNIT_END + 0x046A, // Size: 1, Type: INT, Flags: PRIVATE
+-    PLAYER_FIELD_MAX_LEVEL                    = UNIT_END + 0x046B, // Size: 1, Type: INT, Flags: PRIVATE
+-    PLAYER_FIELD_DAILY_QUESTS_1               = UNIT_END + 0x046C, // Size: 25, Type: INT, Flags: PRIVATE
+-    PLAYER_RUNE_REGEN_1                       = UNIT_END + 0x0485, // Size: 4, Type: FLOAT, Flags: PRIVATE
+-    PLAYER_NO_REAGENT_COST_1                  = UNIT_END + 0x0489, // Size: 3, Type: INT, Flags: PRIVATE
+-    PLAYER_FIELD_GLYPH_SLOTS_1                = UNIT_END + 0x048C, // Size: 6, Type: INT, Flags: PRIVATE
+-    PLAYER_FIELD_GLYPHS_1                     = UNIT_END + 0x0492, // Size: 6, Type: INT, Flags: PRIVATE
+-    PLAYER_GLYPHS_ENABLED                     = UNIT_END + 0x0498, // Size: 1, Type: INT, Flags: PRIVATE
+-    PLAYER_PET_SPELL_POWER                    = UNIT_END + 0x0499, // Size: 1, Type: INT, Flags: PRIVATE
+-    PLAYER_END                                = UNIT_END + 0x049A
++   PLAYER_FIELD_ARENA_TEAM_INFO_1_1          = PLAYER_FIELD_COMBAT_RATING_1 + 25, // Size: 28, Type: INT, Flags: PRIVATE
++   PLAYER_FIELD_HONOR_CURRENCY               = PLAYER_FIELD_ARENA_TEAM_INFO_1_1 + 28, // Size: 1, Type: INT, Flags: PRIVATE
++   PLAYER_FIELD_ARENA_CURRENCY               = PLAYER_FIELD_HONOR_CURRENCY + 1, // Size: 1, Type: INT, Flags: PRIVATE
++   PLAYER_FIELD_MAX_LEVEL                    = PLAYER_FIELD_ARENA_CURRENCY + 1, // Size: 1, Type: INT, Flags: PRIVATE
++   PLAYER_FIELD_DAILY_QUESTS_1               = PLAYER_FIELD_MAX_LEVEL + 1, // Size: 25, Type: INT, Flags: PRIVATE
++   PLAYER_RUNE_REGEN_1                       = PLAYER_FIELD_DAILY_QUESTS_1 + 25, // Size: 4, Type: FLOAT, Flags: PRIVATE
++   PLAYER_NO_REAGENT_COST_1                  = PLAYER_RUNE_REGEN_1 + 4, // Size: 3, Type: INT, Flags: PRIVATE
++   PLAYER_FIELD_GLYPH_SLOTS_1                = PLAYER_NO_REAGENT_COST_1 + 3, // Size: 6, Type: INT, Flags: PRIVATE
++   PLAYER_FIELD_GLYPHS_1                     = PLAYER_FIELD_GLYPH_SLOTS_1 + 6, // Size: 6, Type: INT, Flags: PRIVATE
++   PLAYER_GLYPHS_ENABLED                     = PLAYER_FIELD_GLYPHS_1 + 6, // Size: 1, Type: INT, Flags: PRIVATE
++   PLAYER_PET_SPELL_POWER                    = PLAYER_GLYPHS_ENABLED + 1, // Size: 1, Type: INT, Flags: PRIVATE
++   PLAYER_END                                = PLAYER_PET_SPELL_POWER + 1
+ };
+ 
+ enum EGameObjectFields
+diff --git a/src/server/game/Miscellaneous/SharedDefines.h b/src/server/game/Miscellaneous/SharedDefines.h
+index caf5049..8655253 100644
+--- a/src/server/game/Miscellaneous/SharedDefines.h
++++ b/src/server/game/Miscellaneous/SharedDefines.h
+@@ -3451,6 +3451,7 @@ enum BattlegroundQueueTypeId
+     BATTLEGROUND_QUEUE_2v2      = 8,
+     BATTLEGROUND_QUEUE_3v3      = 9,
+     BATTLEGROUND_QUEUE_5v5      = 10,
++	BATTLEGROUND_QUEUE_1v1      = 11,
+     MAX_BATTLEGROUND_QUEUE_TYPES
+ };
+ 
+diff --git a/src/server/scripts/Custom/1v1.cpp b/src/server/scripts/Custom/1v1.cpp
+new file mode 100644
+index 0000000..2ec4ca0
+--- /dev/null
++++ b/src/server/scripts/Custom/1v1.cpp
+@@ -0,0 +1,268 @@
++#include "ScriptMgr.h"
++#include "ArenaTeamMgr.h"
++#include "Common.h"
++#include "DisableMgr.h"
++#include "BattlegroundMgr.h"
++#include "Battleground.h"
++#include "ArenaTeam.h"
++#include "Language.h"
++
++#define ARENA_1V1_MIN_LEVEL 80 // min level to create an arenateam
++#define ARENA_1V1_COST 40 * 10000 // costs for create a team: 40 gold
++
++class npc_1v1arena : public CreatureScript  
++{
++public:
++    npc_1v1arena() : CreatureScript("npc_1v1arena") 
++	{
++	}
++
++
++	bool JoinQueueArena(Player* player, Creature* me)
++	{
++		if(ARENA_1V1_MIN_LEVEL > player->getLevel())
++			return false;
++
++		uint64 guid = player->GetGUID();
++		uint8 arenaslot = ArenaTeam::GetSlotByType(ARENA_TEAM_1v1);
++		uint8 arenatype = ARENA_TYPE_1v1;
++		uint32 arenaRating = 0;
++		uint32 matchmakerRating = 0;
++		bool isRated = true;
++
++		// ignore if we already in BG or BG queue
++		if (player->InBattleground())
++			return false;
++
++		//check existance
++		Battleground* bg = sBattlegroundMgr->GetBattlegroundTemplate(BATTLEGROUND_AA);
++		if (!bg)
++		{
++			//TC_LOG_ERROR(LOG_FILTER_NETWORKIO, "Battleground: template bg (all arenas) not found");
++			return false;
++		}
++
++		if (DisableMgr::IsDisabledFor(DISABLE_TYPE_BATTLEGROUND, BATTLEGROUND_AA, NULL))
++		{
++			ChatHandler(player->GetSession()).PSendSysMessage(LANG_ARENA_DISABLED);
++			return false;
++		}
++
++		BattlegroundTypeId bgTypeId = bg->GetTypeID();
++		BattlegroundQueueTypeId bgQueueTypeId = BattlegroundMgr::BGQueueTypeId(bgTypeId, arenatype);
++		PvPDifficultyEntry const* bracketEntry = GetBattlegroundBracketByLevel(bg->GetMapId(), player->getLevel());
++		if (!bracketEntry)
++			return false;
++
++		GroupJoinBattlegroundResult err = ERR_GROUP_JOIN_BATTLEGROUND_FAIL;
++
++		// check if already in queue
++        if (player->GetBattlegroundQueueIndex(bgQueueTypeId) < PLAYER_MAX_BATTLEGROUND_QUEUES)
++            //player is already in this queue
++            return false;
++        // check if has free queue slots
++        if (!player->HasFreeBattlegroundQueueId())
++            return false;
++
++		uint32 ateamId = 0;
++
++		ateamId = player->GetArenaTeamId(arenaslot);
++        ArenaTeam* at = sArenaTeamMgr->GetArenaTeamById(ateamId);
++        if (!at)
++        {
++            player->GetSession()->SendNotInArenaTeamPacket(arenatype);
++            return false;
++        }
++        // get the team rating for queueing
++        arenaRating = at->GetRating();
++        matchmakerRating = arenaRating;
++        // the arenateam id must match for everyone in the group
++
++        if (arenaRating <= 0)
++            arenaRating = 1;
++
++		BattlegroundQueue &bgQueue = sBattlegroundMgr->GetBattlegroundQueue(bgQueueTypeId);
++		bg->SetRated(isRated);
++
++		GroupQueueInfo* ginfo = bgQueue.AddGroup(player, NULL, bgTypeId, bracketEntry, arenatype, isRated, false, arenaRating, matchmakerRating, ateamId);
++        uint32 avgTime = bgQueue.GetAverageQueueWaitTime(ginfo, bracketEntry->GetBracketId());
++        uint32 queueSlot = player->AddBattlegroundQueueId(bgQueueTypeId);
++
++        WorldPacket data;
++        // send status packet (in queue)
++        sBattlegroundMgr->BuildBattlegroundStatusPacket(&data, bg, queueSlot, STATUS_WAIT_QUEUE, avgTime, 0, arenatype, 0);
++		player->GetSession()->SendPacket(&data);
++
++		sBattlegroundMgr->ScheduleQueueUpdate(matchmakerRating, arenatype, bgQueueTypeId, bgTypeId, bracketEntry->GetBracketId());
++
++		return true;
++	}
++
++
++	bool CreateArenateam(Player* player, Creature* me)
++	{
++		uint8 slot = ArenaTeam::GetSlotByType(ARENA_TEAM_1v1);
++		if (slot >= MAX_ARENA_SLOT)
++			return false;
++
++		// Check if player is already in an arena team
++		if (player->GetArenaTeamId(slot))
++		{
++			player->GetSession()->SendArenaTeamCommandResult(ERR_ARENA_TEAM_CREATE_S, player->GetName(), "", ERR_ALREADY_IN_ARENA_TEAM);
++			return false;
++		}
++
++
++		// Teamname = playername
++		// if teamname exist, we have to choose another name (playername  number)
++		int i = 1;
++		std::stringstream teamName;
++		teamName << player->GetName();
++		do
++		{
++			if(sArenaTeamMgr->GetArenaTeamByName(teamName.str()) != NULL) // teamname exist, so choose another name
++			{
++				teamName.str(std::string());
++				teamName << player->GetName() << i;
++			}
++			else
++				break;
++		} while (i < 100); // should never happen
++
++		// Create arena team
++		ArenaTeam* arenaTeam = new ArenaTeam();
++
++		if (!arenaTeam->Create(player->GetGUID(), ARENA_TEAM_1v1, teamName.str(), 0, 0, 0, 0, 0))
++		{
++			delete arenaTeam;
++			return false;
++		}
++
++		// Register arena team
++		sArenaTeamMgr->AddArenaTeam(arenaTeam);
++		arenaTeam->AddMember(player->GetGUID());
++
++		ChatHandler(player->GetSession()).SendSysMessage("1v1 Arenateam successful created!");
++
++		return true;
++	}
++
++
++	bool OnGossipHello(Player* player, Creature* me)
++	{
++		if(player->GetArenaTeamId(ArenaTeam::GetSlotByType(ARENA_TEAM_1v1)) == NULL)
++			player->ADD_GOSSIP_ITEM_EXTENDED(GOSSIP_ICON_CHAT, "|TInterface/ICONS/Achievement_Arena_2v2_7:30|t Create 1v1 Rated Arena Team", GOSSIP_SENDER_MAIN, 1, "Create 1v1 arena team?", ARENA_1V1_COST, false);
++		else
++		{
++			if(player->InBattlegroundQueueForBattlegroundQueueType(BATTLEGROUND_QUEUE_1v1))
++				player->ADD_GOSSIP_ITEM(GOSSIP_ICON_CHAT, "|TInterface/ICONS/Achievement_Arena_2v2_7:30|t Leave 1v1 Arena", GOSSIP_SENDER_MAIN, 3);
++			else
++			{
++				player->ADD_GOSSIP_ITEM(GOSSIP_ICON_CHAT, "|TInterface/ICONS/Achievement_Arena_3v3_5:30|t Join 1v1 Rated Arena", GOSSIP_SENDER_MAIN, 2);
++				player->ADD_GOSSIP_ITEM_EXTENDED(GOSSIP_ICON_CHAT, "|TInterface/ICONS/Achievement_Arena_2v2_7:30|t Disband Arena team", GOSSIP_SENDER_MAIN, 5, "Are you sure?", 0, false);
++			}
++
++			player->ADD_GOSSIP_ITEM(GOSSIP_ICON_CHAT, "|TInterface/ICONS/INV_Misc_Coin_01:30|t Show statistics", GOSSIP_SENDER_MAIN, 4);
++		}
++
++		player->ADD_GOSSIP_ITEM(GOSSIP_ICON_CHAT, "|TInterface/ICONS/INV_Misc_Coin_03:30|t How to Use NPC?", GOSSIP_SENDER_MAIN, 8);
++		player->SEND_GOSSIP_MENU(68, me->GetGUID());
++		return true;
++	}
++
++
++
++	bool OnGossipSelect(Player* player, Creature* me, uint32 /*uiSender*/, uint32 uiAction)
++	{
++		player->PlayerTalkClass->ClearMenus();
++
++		switch (uiAction)
++        {
++		case 1: // Create new Arenateam
++			{
++				if(ARENA_1V1_MIN_LEVEL <= player->getLevel())
++				{
++					if(player->GetMoney() >= ARENA_1V1_COST && CreateArenateam(player, me))
++						player->ModifyMoney(-(int32)ARENA_1V1_COST);
++				}
++				else
++				{
++					ChatHandler(player->GetSession()).PSendSysMessage("You need level %u+ to create an 1v1 Arena Team.", ARENA_1V1_MIN_LEVEL);
++					player->CLOSE_GOSSIP_MENU();
++					return true;
++				}
++			}
++			break;
++
++		case 2: // Join Queue Arena
++			{
++				if(JoinQueueArena(player, me) == false)
++					ChatHandler(player->GetSession()).SendSysMessage("Something went wrong while join queue.");
++				player->CLOSE_GOSSIP_MENU();
++				return true;
++			}
++			break;
++
++		case 3: // Leave Queue
++			{
++				WorldPacket Data;
++				Data << (uint8)0x1 << (uint8)0x0 << (uint32)BATTLEGROUND_AA << (uint16)0x0 << (uint8)0x0;
++				player->GetSession()->HandleBattleFieldPortOpcode(Data);
++				player->CLOSE_GOSSIP_MENU();
++				return true;
++			}
++			break;
++
++		case 4: // get statistics
++			{
++				ArenaTeam* at = sArenaTeamMgr->GetArenaTeamById(player->GetArenaTeamId(ArenaTeam::GetSlotByType(ARENA_TEAM_1v1)));
++				if(at)
++				{
++					std::stringstream s;
++					s << "Rating: " << at->GetStats().Rating;
++					s << "\nRank: " << at->GetStats().Rank;
++					s << "\nSeason Games: " << at->GetStats().SeasonGames;
++					s << "\nSeason Wins: " << at->GetStats().SeasonWins;
++					s << "\nWeek Games: " << at->GetStats().WeekGames;
++					s << "\nWeek Wins: " << at->GetStats().WeekWins;
++
++					ChatHandler(player->GetSession()).PSendSysMessage(s.str().c_str());
++				}
++			}
++			break;
++
++
++		case 5: // Disband arenateam
++			{
++				WorldPacket Data;
++				Data << (uint32)player->GetArenaTeamId(ArenaTeam::GetSlotByType(ARENA_TEAM_1v1));
++				player->GetSession()->HandleArenaTeamLeaveOpcode(Data);
++				ChatHandler(player->GetSession()).PSendSysMessage("Arena team deleted!");
++				player->CLOSE_GOSSIP_MENU();
++				return true;
++			}
++			break;
++
++		case 8: // Script Info
++			{
++				player->ADD_GOSSIP_ITEM(GOSSIP_ICON_CHAT, "Click on Create new 1v1 Arena team", GOSSIP_SENDER_MAIN, uiAction);
++				player->ADD_GOSSIP_ITEM(GOSSIP_ICON_CHAT, "Join 1v1 Arena and ready!", GOSSIP_SENDER_MAIN, uiAction);
++				player->ADD_GOSSIP_ITEM(GOSSIP_ICON_CHAT, "Enjoy!", GOSSIP_SENDER_MAIN, uiAction);
++				player->ADD_GOSSIP_ITEM(GOSSIP_ICON_CHAT, "<- Back", GOSSIP_SENDER_MAIN, 7);
++				player->SEND_GOSSIP_MENU(68, me->GetGUID());
++				return true;
++			}
++			break;
++
++		}
++
++		OnGossipHello(player, me);
++		return true;
++	}
++};
++
++
++void AddSC_npc_1v1arena()
++{
++    new npc_1v1arena();
++}
+\ No newline at end of file
+diff --git a/src/server/scripts/Custom/CMakeLists.txt b/src/server/scripts/Custom/CMakeLists.txt
+index 29b5136..81e03c2 100644
+--- a/src/server/scripts/Custom/CMakeLists.txt
++++ b/src/server/scripts/Custom/CMakeLists.txt
+@@ -31,6 +31,7 @@ set(scripts_STAT_SRCS
+   Custom/npc_arena_team_top.cpp
+   Custom/class.cpp
+   Custom/hunterpet_vendor.cpp
++  Custom/1v1.cpp
+ )
+ 
+ message("  -> Prepared: Custom")

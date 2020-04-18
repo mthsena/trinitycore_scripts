@@ -1,0 +1,468 @@
+From 9bc9bd0834445df798093b99a3f973d01a49a683 Mon Sep 17 00:00:00 2001
+From: LordPsyan <realmsofwarcraft@gmail.com>
+Date: Fri, 8 Jan 2016 09:39:58 -0600
+Subject: [PATCH] 2016_01_09-VIP
+
+---
+ sql/TrinityCore-Patches/VIP/account_premium.sql    | 22 ++++++
+ src/server/authserver/Server/AuthSession.cpp       |  3 +
+ .../Database/Implementation/LoginDatabase.cpp      |  4 +-
+ .../Database/Implementation/LoginDatabase.h        |  3 +
+ src/server/game/Entities/Player/Player.cpp         |  9 ++-
+ src/server/game/Miscellaneous/Formulas.h           |  6 +-
+ src/server/game/Miscellaneous/Language.h           |  2 +-
+ src/server/game/Reputation/ReputationMgr.cpp       |  4 +
+ src/server/game/Scripting/ScriptLoader.cpp         |  4 +-
+ src/server/game/Server/WorldSession.cpp            |  3 +-
+ src/server/game/Server/WorldSession.h              |  4 +-
+ src/server/game/Server/WorldSocket.cpp             | 14 +++-
+ src/server/game/World/World.cpp                    |  9 +++
+ src/server/game/World/World.h                      |  9 +++
+ src/server/scripts/Custom/cs_premium.cpp           | 88 ++++++++++++++++++++++
+ src/server/worldserver/worldserver.conf.dist       | 16 ++++
+ 16 files changed, 189 insertions(+), 11 deletions(-)
+ create mode 100644 sql/TrinityCore-Patches/VIP/account_premium.sql
+ create mode 100644 src/server/scripts/Custom/cs_premium.cpp
+
+diff --git a/sql/TrinityCore-Patches/VIP/account_premium.sql b/sql/TrinityCore-Patches/VIP/account_premium.sql
+new file mode 100644
+index 0000000..770380c
+--- /dev/null
++++ b/sql/TrinityCore-Patches/VIP/account_premium.sql
+@@ -0,0 +1,22 @@
++CREATE TABLE IF NOT EXISTS `auth`.`account_premium` (
++  `id` int(11) NOT NULL DEFAULT '0' COMMENT 'Account id',
++  `setdate` int(4) NOT NULL DEFAULT '0',
++  `unsetdate` int(4) NOT NULL DEFAULT '0',
++  `premium_type` tinyint(4) unsigned NOT NULL DEFAULT '1',
++  `active` tinyint(4) NOT NULL DEFAULT '1',
++  PRIMARY KEY (`id`),
++  KEY `active` (`active`),
++  KEY `setdate` (`setdate`),
++  KEY `unsetdate` (`unsetdate`)
++) ENGINE=InnoDB DEFAULT CHARSET=utf8;
++
++
++INSERT INTO `auth`.`rbac_permissions` (`id`, `name`) VALUES
++(999, 'Command: vip');
++
++INSERT INTO `auth`.`rbac_linked_permissions` (`id`, `linkedId`) VALUES
++(195, 999);
++
++INSERT INTO `world`.`command` (`name`, `permission`, `help`) VALUES
++('vip bank', 999, 'Syntax: .vip bank'),
++('vip mail', 999, 'Syntax: .vip mail');
+\ No newline at end of file
+diff --git a/src/server/authserver/Server/AuthSession.cpp b/src/server/authserver/Server/AuthSession.cpp
+index 60e9b73..fe935cf 100644
+--- a/src/server/authserver/Server/AuthSession.cpp
++++ b/src/server/authserver/Server/AuthSession.cpp
+@@ -297,6 +297,9 @@ bool AuthSession::HandleLogonChallenge()
+                 //set expired bans to inactive
+                 LoginDatabase.DirectExecute(LoginDatabase.GetPreparedStatement(LOGIN_UPD_EXPIRED_ACCOUNT_BANS));
+ 
++                //set expired premium to inactive
++                LoginDatabase.DirectExecute(LoginDatabase.GetPreparedStatement(LOGIN_UPD_EXPIRED_ACCOUNT_PREMIUM));
++
+                 // If the account is banned, reject the logon attempt
+                 stmt = LoginDatabase.GetPreparedStatement(LOGIN_SEL_ACCOUNT_BANNED);
+                 stmt->setUInt32(0, fields[1].GetUInt32());
+diff --git a/src/server/database/Database/Implementation/LoginDatabase.cpp b/src/server/database/Database/Implementation/LoginDatabase.cpp
+index 66847f0..641ffe2 100644
+--- a/src/server/database/Database/Implementation/LoginDatabase.cpp
++++ b/src/server/database/Database/Implementation/LoginDatabase.cpp
+@@ -109,8 +109,10 @@ void LoginDatabaseConnection::DoPrepareStatements()
+     PrepareStatement(LOGIN_INS_CHAR_IP_LOGGING, "INSERT INTO logs_ip_actions (account_id,character_guid,type,ip,systemnote,unixtime,time) VALUES (?, ?, ?, ?, ?, unix_timestamp(NOW()), NOW())", CONNECTION_ASYNC);
+     // 0: string, 1: string, 2: string                      // Complete name: "Login_Insert_Failed_Account_Login_due_password_IP_Logging"
+     PrepareStatement(LOGIN_INS_FALP_IP_LOGGING, "INSERT INTO logs_ip_actions (account_id,character_guid,type,ip,systemnote,unixtime,time) VALUES ((SELECT id FROM account WHERE username = ?), 0, 1, ?, ?, unix_timestamp(NOW()), NOW())", CONNECTION_ASYNC);
+-    PrepareStatement(LOGIN_SEL_ACCOUNT_ACCESS_BY_ID, "SELECT gmlevel, RealmID FROM account_access WHERE id = ? and (RealmID = ? OR RealmID = -1) ORDER BY gmlevel desc", CONNECTION_SYNCH);
++    PrepareStatement(LOGIN_UPD_EXPIRED_ACCOUNT_PREMIUM, "UPDATE account_premium SET active = 0 WHERE unsetdate<=UNIX_TIMESTAMP() AND unsetdate<>setdate", CONNECTION_SYNCH);
++    PrepareStatement(LOGIN_SEL_PREMIUM, "SELECT 1 FROM account_premium WHERE id = ? AND active = 1", CONNECTION_SYNCH);
+ 
++    PrepareStatement(LOGIN_SEL_ACCOUNT_ACCESS_BY_ID, "SELECT gmlevel, RealmID FROM account_access WHERE id = ? and (RealmID = ? OR RealmID = -1) ORDER BY gmlevel desc", CONNECTION_SYNCH);
+     PrepareStatement(LOGIN_SEL_RBAC_ACCOUNT_PERMISSIONS, "SELECT permissionId, granted FROM rbac_account_permissions WHERE accountId = ? AND (realmId = ? OR realmId = -1) ORDER BY permissionId, realmId", CONNECTION_BOTH);
+     PrepareStatement(LOGIN_INS_RBAC_ACCOUNT_PERMISSION, "INSERT INTO rbac_account_permissions (accountId, permissionId, granted, realmId) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE granted = VALUES(granted)", CONNECTION_ASYNC);
+     PrepareStatement(LOGIN_DEL_RBAC_ACCOUNT_PERMISSION, "DELETE FROM rbac_account_permissions WHERE accountId = ? AND permissionId = ? AND (realmId = ? OR realmId = -1)", CONNECTION_ASYNC);
+diff --git a/src/server/database/Database/Implementation/LoginDatabase.h b/src/server/database/Database/Implementation/LoginDatabase.h
+index 69c2e75..f851ab1 100644
+--- a/src/server/database/Database/Implementation/LoginDatabase.h
++++ b/src/server/database/Database/Implementation/LoginDatabase.h
+@@ -109,6 +109,9 @@ enum LoginDatabaseStatements
+     LOGIN_INS_CHAR_IP_LOGGING,
+     LOGIN_INS_FALP_IP_LOGGING,
+ 
++    LOGIN_UPD_EXPIRED_ACCOUNT_PREMIUM,
++    LOGIN_SEL_PREMIUM,
++
+     LOGIN_SEL_ACCOUNT_ACCESS_BY_ID,
+     LOGIN_SEL_RBAC_ACCOUNT_PERMISSIONS,
+     LOGIN_INS_RBAC_ACCOUNT_PERMISSION,
+diff --git a/src/server/game/Entities/Player/Player.cpp b/src/server/game/Entities/Player/Player.cpp
+index 77b4c69..8b2a84c 100644
+--- a/src/server/game/Entities/Player/Player.cpp
++++ b/src/server/game/Entities/Player/Player.cpp
+@@ -6521,6 +6521,9 @@ void Player::CheckAreaExploreAndOutdoor()
+                     XP = uint32(sObjectMgr->GetBaseXP(areaEntry->area_level)*sWorld->getRate(RATE_XP_EXPLORE));
+                 }
+ 
++                if(GetSession()->IsPremium())
++                    XP *= sWorld->getRate(RATE_XP_EXPLORE_PREMIUM);
++
+                 GiveXP(XP, NULL);
+                 SendExplorationExperience(area, XP);
+             }
+@@ -6890,7 +6893,8 @@ bool Player::RewardHonor(Unit* victim, uint32 groupsize, int32 honor, bool pvpto
+     // 34
+     // 35
+     // 36
+-    // 37
++    if(GetSession()->IsPremium())
++        honor_f *= sWorld->getRate(RATE_HONOR_PREMIUM);
+     // 38
+     // 39
+     // 40
+@@ -15020,7 +15024,8 @@ void Player::RewardQuest(Quest const* quest, uint32 reward, Object* questGiver,
+     // 49
+     // 50
+     // 51
+-    // 52
++    if (GetSession()->IsPremium())
++        XP *= sWorld->getRate(RATE_XP_QUEST_PREMIUM);
+     // 53
+     // 54
+     // 55
+diff --git a/src/server/game/Miscellaneous/Formulas.h b/src/server/game/Miscellaneous/Formulas.h
+index 6a57ee1..efb0c0c 100644
+--- a/src/server/game/Miscellaneous/Formulas.h
++++ b/src/server/game/Miscellaneous/Formulas.h
+@@ -27,7 +27,7 @@
+ // Prepatch by LordPsyan
+ // 01
+ // 02
+-// 03
++#include "WorldSession.h"
+ // 04
+ // 05
+ // 06
+@@ -235,6 +235,10 @@ namespace Trinity
+                     // End of prepatch
+                 } else {
+                 xpMod *= isBattleGround ? sWorld->getRate(RATE_XP_BG_KILL) : sWorld->getRate(RATE_XP_KILL);
++
++                if(player->GetSession()->IsPremium())
++                    xpMod *= sWorld->getRate(RATE_XP_KILL_PREMIUM);
++
+                 gain = uint32(gain * xpMod);
+             }
+             }
+diff --git a/src/server/game/Miscellaneous/Language.h b/src/server/game/Miscellaneous/Language.h
+index c8d0a16..6c43f35 100644
+--- a/src/server/game/Miscellaneous/Language.h
++++ b/src/server/game/Miscellaneous/Language.h
+@@ -1206,7 +1206,7 @@ enum TrinityStrings
+     // 15
+     // 16
+     // 17
+-    // 18
++    LANG_PREMIUM_CANT_DO                = 12009,
+     // 19
+     // 20
+     // Visit http://www.realmsofwarcraft.com/bb for forums and information
+diff --git a/src/server/game/Reputation/ReputationMgr.cpp b/src/server/game/Reputation/ReputationMgr.cpp
+index fb2873f..e274d04 100644
+--- a/src/server/game/Reputation/ReputationMgr.cpp
++++ b/src/server/game/Reputation/ReputationMgr.cpp
+@@ -367,6 +367,10 @@ bool ReputationMgr::SetOneFactionReputation(FactionEntry const* factionEntry, in
+         {
+             // int32 *= float cause one point loss?
+             standing = int32(floor((float)standing * sWorld->getRate(RATE_REPUTATION_GAIN) + 0.5f));
++
++            if(_player->GetSession()->IsPremium())
++                 standing *= sWorld->getRate(RATE_REPUTATION_PREMIUM);
++
+             standing += itr->second.Standing + BaseRep;
+         }
+ 
+diff --git a/src/server/game/Scripting/ScriptLoader.cpp b/src/server/game/Scripting/ScriptLoader.cpp
+index 3640ce9..2c5f75a 100644
+--- a/src/server/game/Scripting/ScriptLoader.cpp
++++ b/src/server/game/Scripting/ScriptLoader.cpp
+@@ -1476,7 +1476,7 @@ void AddBattlegroundScripts()
+ // start63
+ // start64
+ // start65
+-// start66
++void AddSC_premium_commandscript();
+ // start67
+ // start68
+ // start69
+@@ -1602,7 +1602,7 @@ void AddCustomScripts()
+ // end63
+ // end64
+ // end65
+-// end66
++    AddSC_premium_commandscript();
+ // end67
+ // end68
+ // end69
+diff --git a/src/server/game/Server/WorldSession.cpp b/src/server/game/Server/WorldSession.cpp
+index c380c1a..324b205 100644
+--- a/src/server/game/Server/WorldSession.cpp
++++ b/src/server/game/Server/WorldSession.cpp
+@@ -95,7 +95,7 @@ bool WorldSessionFilter::Process(WorldPacket* packet)
+ }
+ 
+ /// WorldSession constructor
+-WorldSession::WorldSession(uint32 id, std::string&& name, std::shared_ptr<WorldSocket> sock, AccountTypes sec, uint8 expansion, time_t mute_time, LocaleConstant locale, uint32 recruiter, bool isARecruiter):
++WorldSession::WorldSession(uint32 id, std::string&& name, std::shared_ptr<WorldSocket> sock, AccountTypes sec, bool ispremium, uint8 expansion, time_t mute_time, LocaleConstant locale, uint32 recruiter, bool isARecruiter):
+     m_muteTime(mute_time),
+     m_timeOutTime(0),
+     AntiDOS(this),
+@@ -103,6 +103,7 @@ WorldSession::WorldSession(uint32 id, std::string&& name, std::shared_ptr<WorldS
+     _player(NULL),
+     m_Socket(sock),
+     _security(sec),
++    _ispremium(ispremium),
+     _accountId(id),
+     _accountName(std::move(name)),
+     m_expansion(expansion),
+diff --git a/src/server/game/Server/WorldSession.h b/src/server/game/Server/WorldSession.h
+index 2253b6b..fb64704 100644
+--- a/src/server/game/Server/WorldSession.h
++++ b/src/server/game/Server/WorldSession.h
+@@ -249,7 +249,7 @@ struct PacketCounter
+ class WorldSession
+ {
+     public:
+-        WorldSession(uint32 id, std::string&& name, std::shared_ptr<WorldSocket> sock, AccountTypes sec, uint8 expansion, time_t mute_time, LocaleConstant locale, uint32 recruiter, bool isARecruiter);
++        WorldSession(uint32 id, std::string&& name, std::shared_ptr<WorldSocket> sock, AccountTypes sec, bool ispremium, uint8 expansion, time_t mute_time, LocaleConstant locale, uint32 recruiter, bool isARecruiter);
+         ~WorldSession();
+ 
+         bool PlayerLoading() const { return m_playerLoading; }
+@@ -286,6 +286,7 @@ class WorldSession
+         void InvalidateRBACData(); // Used to force LoadPermissions at next HasPermission check
+ 
+         AccountTypes GetSecurity() const { return _security; }
++        bool IsPremium() const { return _ispremium; }
+         uint32 GetAccountId() const { return _accountId; }
+         Player* GetPlayer() const { return _player; }
+         std::string const& GetPlayerName() const;
+@@ -1040,6 +1041,7 @@ class WorldSession
+         uint32 _accountId;
+         std::string _accountName;
+         uint8 m_expansion;
++        bool _ispremium;
+ 
+         typedef std::list<AddonInfo> AddonsList;
+ 
+diff --git a/src/server/game/Server/WorldSocket.cpp b/src/server/game/Server/WorldSocket.cpp
+index a2d357c..ba33173 100644
+--- a/src/server/game/Server/WorldSocket.cpp
++++ b/src/server/game/Server/WorldSocket.cpp
+@@ -461,7 +461,7 @@ void WorldSocket::HandleAuthSessionCallback(std::shared_ptr<AuthSession> authSes
+ 
+     // Check that Key and account name are the same on client and server
+     uint32 t = 0;
+-
++    bool isPremium = false;
+     SHA1Hash sha;
+     sha.UpdateData(authSession->Account);
+     sha.UpdateData((uint8*)&t, 4);
+@@ -525,6 +525,16 @@ void WorldSocket::HandleAuthSessionCallback(std::shared_ptr<AuthSession> authSes
+         return;
+     }
+ 
++    // Check premium
++    stmt = LoginDatabase.GetPreparedStatement(LOGIN_SEL_PREMIUM);
++    stmt->setUInt32(0, account.Id);
++    PreparedQueryResult premresult = LoginDatabase.Query(stmt);
++
++    if (premresult)
++    {
++        isPremium = true;
++    }
++
+     // Check locked state for server
+     AccountTypes allowedAccountType = sWorld->GetPlayerSecurityLimit();
+     TC_LOG_DEBUG("network", "Allowed Level: %u Player Level %u", allowedAccountType, account.Security);
+@@ -552,7 +562,7 @@ void WorldSocket::HandleAuthSessionCallback(std::shared_ptr<AuthSession> authSes
+ 
+     _authed = true;
+     _worldSession = new WorldSession(account.Id, std::move(authSession->Account), shared_from_this(), account.Security,
+-        account.Expansion, mutetime, account.Locale, account.Recruiter, account.IsRectuiter);
++        isPremium, account.Expansion, mutetime, account.Locale, account.Recruiter, account.IsRectuiter);
+     _worldSession->ReadAddonsInfo(authSession->AddonInfo);
+ 
+     // Initialize Warden system only if it is enabled by config
+diff --git a/src/server/game/World/World.cpp b/src/server/game/World/World.cpp
+index e1fc737..b9c09d9 100644
+--- a/src/server/game/World/World.cpp
++++ b/src/server/game/World/World.cpp
+@@ -472,6 +472,15 @@ void World::LoadConfigSettings(bool reload)
+     rate_values[RATE_XP_BG_KILL]  = sConfigMgr->GetFloatDefault("Rate.XP.BattlegroundKill", 1.0f);
+     rate_values[RATE_XP_QUEST]    = sConfigMgr->GetFloatDefault("Rate.XP.Quest", 1.0f);
+     rate_values[RATE_XP_EXPLORE]  = sConfigMgr->GetFloatDefault("Rate.XP.Explore", 1.0f);
++
++    rate_values[RATE_XP_KILL_PREMIUM]    = sConfigMgr->GetFloatDefault("Rate.XP.Kill.Premium", 1.0f);
++    rate_values[RATE_XP_QUEST_PREMIUM]   = sConfigMgr->GetFloatDefault("Rate.XP.Quest.Premium", 1.0f);
++    rate_values[RATE_XP_EXPLORE_PREMIUM] = sConfigMgr->GetFloatDefault("Rate.XP.Explore.Premium", 1.0f);
++    rate_values[RATE_REPUTATION_PREMIUM] = sConfigMgr->GetFloatDefault("Rate.Reputation.Premium", 1.0f);
++    rate_values[RATE_HONOR_PREMIUM]      = sConfigMgr->GetFloatDefault("Rate.Honor.Premium", 1.0f);
++    m_bool_configs[COMMAND_BANK_PREMIUM] = sConfigMgr->GetFloatDefault("Command.Bank.Premium", false);
++    m_bool_configs[COMMAND_MAIL_PREMIUM] = sConfigMgr->GetFloatDefault("Command.Mail.Premium", false);
++
+     rate_values[RATE_REPAIRCOST]  = sConfigMgr->GetFloatDefault("Rate.RepairCost", 1.0f);
+     if (rate_values[RATE_REPAIRCOST] < 0.0f)
+     {
+diff --git a/src/server/game/World/World.h b/src/server/game/World/World.h
+index 7a3e56c..f4fddc1 100644
+--- a/src/server/game/World/World.h
++++ b/src/server/game/World/World.h
+@@ -98,6 +98,8 @@ enum WorldBoolConfigs
+     CONFIG_ALLOW_TWO_SIDE_INTERACTION_GUILD,
+     CONFIG_ALLOW_TWO_SIDE_INTERACTION_AUCTION,
+     CONFIG_ALLOW_TWO_SIDE_TRADE,
++    COMMAND_BANK_PREMIUM,
++    COMMAND_MAIL_PREMIUM,
+     CONFIG_ALL_TAXI_PATHS,
+     CONFIG_INSTANT_TAXI,
+     CONFIG_INSTANCE_IGNORE_LEVEL,
+@@ -477,6 +479,13 @@ enum Rates
+     RATE_XP_BG_KILL,
+     RATE_XP_QUEST,
+     RATE_XP_EXPLORE,
++
++    RATE_XP_KILL_PREMIUM,
++    RATE_XP_QUEST_PREMIUM,
++    RATE_XP_EXPLORE_PREMIUM,
++    RATE_REPUTATION_PREMIUM,
++    RATE_HONOR_PREMIUM,
++
+     RATE_REPAIRCOST,
+     RATE_REPUTATION_GAIN,
+     RATE_REPUTATION_LOWLEVEL_KILL,
+diff --git a/src/server/scripts/Custom/cs_premium.cpp b/src/server/scripts/Custom/cs_premium.cpp
+new file mode 100644
+index 0000000..f85ea26
+--- /dev/null
++++ b/src/server/scripts/Custom/cs_premium.cpp
+@@ -0,0 +1,88 @@
++#include "Language.h"
++#include "World.h"
++//#include "AuctionHouseMgr.h"
++
++class premium_commandscript : public CommandScript
++{
++public:
++    premium_commandscript() : CommandScript("premium_commandscript") { }
++
++    std::vector<ChatCommand> GetCommands() const override
++    {
++        static std::vector<ChatCommand> premiumCommandTable =
++        {
++            { "bank",  SEC_PLAYER, false, &HandlePremiumBankCommand,    "" },
++            { "mail",  SEC_PLAYER, false, &HandlePremiumMailCommand,    "" },
++            //{ "auc",  SEC_PLAYER,  false, &HandlePremiumAuctionCommand, "", NULL },
++        };
++
++        static std::vector<ChatCommand> commandTable =
++        {
++            { "vip", SEC_PLAYER, false, NULL, "", premiumCommandTable },
++        };
++
++        return commandTable;
++    }
++
++    static bool HandlePremiumBankCommand(ChatHandler* handler, char const* /*args*/)
++    {
++        Player *player = handler->GetSession()->GetPlayer();
++        if (player->GetSession()->IsPremium() && sWorld->getBoolConfig(COMMAND_BANK_PREMIUM))
++        {
++            //Different Checks
++            if (player->IsInCombat() || player->IsInFlight() || player->GetMap()->IsBattlegroundOrArena() || player->HasStealthAura() || player->HasFlag(UNIT_FIELD_FLAGS_2, UNIT_FLAG2_FEIGN_DEATH) || player->isDead())
++            {
++                handler->SendSysMessage(LANG_PREMIUM_CANT_DO);
++                handler->SetSentErrorMessage(true);
++                return false;
++            }
++
++            handler->GetSession()->SendShowBank(handler->GetSession()->GetPlayer()->GetGUID());
++        }
++        return true;
++    }
++
++    static bool HandlePremiumMailCommand(ChatHandler* handler, char const* /*args*/)
++    {
++        Player* player = handler->GetSession()->GetPlayer();
++        if (player->GetSession()->IsPremium() && sWorld->getBoolConfig(COMMAND_MAIL_PREMIUM))
++        {
++            //Different Checks
++            if (player->IsInCombat() || player->IsInFlight() || player->GetMap()->IsBattlegroundOrArena() || player->HasStealthAura() || player->HasFlag(UNIT_FIELD_FLAGS_2, UNIT_FLAG2_FEIGN_DEATH) || player->isDead())
++            {
++                handler->SendSysMessage(LANG_PREMIUM_CANT_DO);
++                handler->SetSentErrorMessage(true);
++                return false;
++            }
++
++            handler->GetSession()->SendShowMailBox(player->GetGUID());
++        }
++        return true;
++    }
++
++    //static bool HandlePremiumAuctionCommand(ChatHandler* handler, char const* /*args*/)
++    //{
++        //Player* player = handler->GetSession()->GetPlayer();
++        //if(player->GetSession()->IsPremium())
++        //{
++            //Different Checks
++            //if(player->IsInCombat() || player->IsInFlight() || player->GetMap()->IsBattlegroundOrArena() || player->HasStealthAura() || player->HasFlag(UNIT_FIELD_FLAGS_2, UNIT_FLAG2_FEIGN_DEATH) || player->isDead())
++            //{
++            //    handler->SendSysMessage(LANG_PREMIUM_CANT_DO);
++            //    handler->SetSentErrorMessage(true);
++            //    return false;
++            //}
++
++            //handler->GetSession()->SendAuctionHello(player->GetGUID());
++            //handler->GetSession()->SendAuctionHello(player->getFaction());
++
++        //}
++        //return true;
++    //}
++
++};
++
++void AddSC_premium_commandscript()
++{
++    new premium_commandscript();
++}
+\ No newline at end of file
+diff --git a/src/server/worldserver/worldserver.conf.dist b/src/server/worldserver/worldserver.conf.dist
+index 8edd644..c385332 100644
+--- a/src/server/worldserver/worldserver.conf.dist
++++ b/src/server/worldserver/worldserver.conf.dist
+@@ -2642,6 +2642,22 @@ CharDelete.KeepDays = 30
+ #
+ ###################################################################################################
+ 
++#    Rate.XP.Kill.Premium
++#    Rate.XP.Quest.Premium
++#    Rate.XP.Explore.Premium
++#    Rate.Honor.Premium
++#    Rate.Reputation.Gain.Premium
++#        XP rates Premium modifier
++#        Default: 1
++
++Rate.XP.Kill.Premium     = 1
++Rate.XP.Quest.Premium    = 1
++Rate.XP.Explore.Premium  = 1
++Rate.Honor.Premium       = 1
++Rate.Reputation.Premium  = 1
++Command.Bank.Premium     = 1
++Command.Mail.Premium     = 1
++
+ ###################################################################################################
+ # CUSTOM SERVER OPTIONS
+ #
+-- 
+2.1.4
+

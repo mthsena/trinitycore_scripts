@@ -1,0 +1,750 @@
+From 5f0eaf959762fa898f85bc48f2952246fed5e94f Mon Sep 17 00:00:00 2001
+From: LordPsyan <realmsofwarcraft@gmail.com>
+Date: Fri, 25 Sep 2015 13:43:58 -0500
+Subject: [PATCH] 2015_09_25-rate_xp_loot
+
+---
+ sql/TrinityCore-Patches/Rates/auth.rbac.sql        |   11 +
+ sql/TrinityCore-Patches/Rates/characters.rates.sql |   13 +
+ sql/TrinityCore-Patches/Rates/world.commands.sql   |    5 +
+ .../Database/Implementation/CharacterDatabase.cpp  |    9 +-
+ .../Database/Implementation/CharacterDatabase.h    |   10 +-
+ src/server/game/Entities/Creature/GossipDef.cpp    |    4 +-
+ src/server/game/Entities/Player/Player.cpp         |    6 +-
+ src/server/game/Entities/Player/Player.h           |    9 +-
+ src/server/game/Loot/LootMgr.cpp                   |   12 +-
+ src/server/game/Loot/LootMgr.h                     |    4 +-
+ src/server/game/Scripting/ScriptLoader.cpp         |    4 +-
+ src/server/game/World/World.cpp                    |   42 ++-
+ src/server/game/World/World.h                      |    8 +-
+ src/server/scripts/Custom/custom_rates.cpp         |  315 ++++++++++++++++++++
+ src/server/worldserver/worldserver.conf.dist       |   43 +++
+ 15 files changed, 475 insertions(+), 20 deletions(-)
+ create mode 100644 sql/TrinityCore-Patches/Rates/auth.rbac.sql
+ create mode 100644 sql/TrinityCore-Patches/Rates/characters.rates.sql
+ create mode 100644 sql/TrinityCore-Patches/Rates/world.commands.sql
+ create mode 100644 src/server/scripts/Custom/custom_rates.cpp
+
+diff --git a/sql/TrinityCore-Patches/Rates/auth.rbac.sql b/sql/TrinityCore-Patches/Rates/auth.rbac.sql
+new file mode 100644
+index 0000000..bcf6c39
+--- /dev/null
++++ b/sql/TrinityCore-Patches/Rates/auth.rbac.sql
+@@ -0,0 +1,11 @@
++SET @RATE_PERM := '1300';
++
++DELETE FROM `rbac_permissions` WHERE `id` BETWEEN @RATE_PERM AND @RATE_PERM+1;
++INSERT INTO `rbac_permissions` (`id`,`name`) VALUES
++(@RATE_PERM+0,'rate xp'),
++(@RATE_PERM+1,'rate loot');
++
++DELETE FROM `rbac_linked_permissions` WHERE `linkedId` BETWEEN @RATE_PERM AND @RATE_PERM+1;
++INSERT INTO `rbac_linked_permissions` (`id`,`linkedId`) VALUES
++('199',@RATE_PERM+0), -- GM command .rate xp
++('199',@RATE_PERM+1); -- GM command .rate loot
+\ No newline at end of file
+diff --git a/sql/TrinityCore-Patches/Rates/characters.rates.sql b/sql/TrinityCore-Patches/Rates/characters.rates.sql
+new file mode 100644
+index 0000000..7ee01af
+--- /dev/null
++++ b/sql/TrinityCore-Patches/Rates/characters.rates.sql
+@@ -0,0 +1,13 @@
++DROP TABLE IF EXISTS `character_loot_rate`;
++CREATE TABLE `character_loot_rate` (
++  `guid` int(10) unsigned NOT NULL,
++  `loot_rate` int(10) unsigned NOT NULL DEFAULT '1',
++  PRIMARY KEY (`guid`)
++) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='Player Loot Rate System';
++
++DROP TABLE IF EXISTS `character_xp_rate`;
++CREATE TABLE `character_xp_rate` (
++  `guid` int(10) UNSIGNED NOT NULL,
++  `xp_rate` int(10) UNSIGNED NOT NULL DEFAULT '1',
++  PRIMARY KEY (`guid`)
++) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='Player XP Rate System';
+diff --git a/sql/TrinityCore-Patches/Rates/world.commands.sql b/sql/TrinityCore-Patches/Rates/world.commands.sql
+new file mode 100644
+index 0000000..0a408c7
+--- /dev/null
++++ b/sql/TrinityCore-Patches/Rates/world.commands.sql
+@@ -0,0 +1,5 @@
++SET @RATE_PERM := '1300';
++
++INSERT INTO `command`(`name`,`permission`,`help`) VALUES
++('rate xp',@RATE_PERM+0,'Syntax: .rate xp $value\r\nSets your XP multiplier to $value. If no parameter is provided, it will show your current XP rate.'),
++('rate loot',@RATE_PERM+1,'Syntax: .rate loot $value\r\nSets your loot multiplier to $value. If no parameter is provided, it will show your current loot rate. A $value of 0 means you won\'t be able to loot anything.');
+diff --git a/src/server/database/Database/Implementation/CharacterDatabase.cpp b/src/server/database/Database/Implementation/CharacterDatabase.cpp
+index 9ff0d61..e5ae45a 100644
+--- a/src/server/database/Database/Implementation/CharacterDatabase.cpp
++++ b/src/server/database/Database/Implementation/CharacterDatabase.cpp
+@@ -627,7 +627,14 @@ void CharacterDatabaseConnection::DoPrepareStatements()
+     // 14
+     // 15
+     // 16
+-    // 17
++    PrepareStatement(CHAR_INS_INDIVIDUAL_XP_RATE, "INSERT INTO character_xp_rate (guid, xp_rate) VALUES (?, ?)", CONNECTION_ASYNC);
++    PrepareStatement(CHAR_DEL_INDIVIDUAL_XP_RATE, "DELETE FROM character_xp_rate WHERE guid = ?", CONNECTION_ASYNC);
++    PrepareStatement(CHAR_SEL_INDIVIDUAL_XP_RATE, "SELECT xp_rate FROM character_xp_rate WHERE guid = ?", CONNECTION_SYNCH);
++    PrepareStatement(CHAR_UPD_INDIVIDUAL_XP_RATE, "UPDATE character_xp_rate SET xp_rate = ? WHERE guid = ?", CONNECTION_ASYNC);
++    PrepareStatement(CHAR_INS_INDIVIDUAL_LOOT_RATE, "INSERT INTO character_loot_rate (guid, loot_rate) VALUES (?, ?)", CONNECTION_ASYNC);
++    PrepareStatement(CHAR_DEL_INDIVIDUAL_LOOT_RATE, "DELETE FROM character_loot_rate WHERE guid = ?", CONNECTION_ASYNC);
++    PrepareStatement(CHAR_SEL_INDIVIDUAL_LOOT_RATE, "SELECT loot_rate FROM character_loot_rate WHERE guid = ?", CONNECTION_SYNCH);
++    PrepareStatement(CHAR_UPD_INDIVIDUAL_LOOT_RATE, "UPDATE character_loot_rate SET loot_rate = ? WHERE guid = ?", CONNECTION_ASYNC);
+     // 18
+     // 19
+     // 20
+diff --git a/src/server/database/Database/Implementation/CharacterDatabase.h b/src/server/database/Database/Implementation/CharacterDatabase.h
+index bb995dd..38e2cb6 100644
+--- a/src/server/database/Database/Implementation/CharacterDatabase.h
++++ b/src/server/database/Database/Implementation/CharacterDatabase.h
+@@ -559,7 +559,15 @@ enum CharacterDatabaseStatements
+     // 14
+     // 15
+     // 16
+-    // 17
++    CHAR_INS_INDIVIDUAL_XP_RATE,
++    CHAR_DEL_INDIVIDUAL_XP_RATE,
++    CHAR_SEL_INDIVIDUAL_XP_RATE,
++    CHAR_UPD_INDIVIDUAL_XP_RATE,
++
++    CHAR_INS_INDIVIDUAL_LOOT_RATE,
++    CHAR_DEL_INDIVIDUAL_LOOT_RATE,
++    CHAR_SEL_INDIVIDUAL_LOOT_RATE,
++    CHAR_UPD_INDIVIDUAL_LOOT_RATE,
+     // 18
+     // 19
+     // 20
+diff --git a/src/server/game/Entities/Creature/GossipDef.cpp b/src/server/game/Entities/Creature/GossipDef.cpp
+index db67f1f..30a70aa 100644
+--- a/src/server/game/Entities/Creature/GossipDef.cpp
++++ b/src/server/game/Entities/Creature/GossipDef.cpp
+@@ -454,7 +454,7 @@ void PlayerMenu::SendQuestGiverQuestDetails(Quest const* quest, ObjectGuid npcGU
+         }
+ 
+         data << uint32(quest->GetRewOrReqMoney());
+-        data << uint32(quest->XPValue(_session->GetPlayer()) * sWorld->getRate(RATE_XP_QUEST));
++        data << uint32(quest->XPValue(_session->GetPlayer()) * sWorld->getRate(RATE_XP_QUEST) * _session->GetPlayer()->GetCustomXpRate());
+     }
+ 
+     // rewarded honor points. Multiply with 10 to satisfy client
+@@ -692,7 +692,7 @@ void PlayerMenu::SendQuestGiverOfferReward(Quest const* quest, ObjectGuid npcGUI
+     }
+ 
+     data << uint32(quest->GetRewOrReqMoney());
+-    data << uint32(quest->XPValue(_session->GetPlayer()) * sWorld->getRate(RATE_XP_QUEST));
++    data << uint32(quest->XPValue(_session->GetPlayer()) * sWorld->getRate(RATE_XP_QUEST) * _session->GetPlayer()->GetCustomXpRate());
+ 
+     // rewarded honor points. Multiply with 10 to satisfy client
+     data << uint32(10 * quest->CalculateHonorGain(_session->GetPlayer()->GetQuestLevel(quest)));
+diff --git a/src/server/game/Entities/Player/Player.cpp b/src/server/game/Entities/Player/Player.cpp
+index 2fe5084..5c388c0 100644
+--- a/src/server/game/Entities/Player/Player.cpp
++++ b/src/server/game/Entities/Player/Player.cpp
+@@ -927,6 +927,9 @@ Player::Player(WorldSession* session): Unit(true)
+     _activeCheats = CHEAT_NONE;
+     m_achievementMgr = new AchievementMgr(this);
+     m_reputationMgr = new ReputationMgr(this);
++
++    m_CustomXpRate = 1;
++    m_CustomLootRate = 1;
+ }
+ 
+ Player::~Player()
+@@ -6790,6 +6793,7 @@ void Player::CheckAreaExploreAndOutdoor()
+                     XP = uint32(sObjectMgr->GetBaseXP(areaEntry->area_level)*sWorld->getRate(RATE_XP_EXPLORE));
+                 }
+ 
++                XP *= GetCustomXpRate();
+                 GiveXP(XP, NULL);
+                 SendExplorationExperience(area, XP);
+             }
+@@ -15280,7 +15284,7 @@ void Player::RewardQuest(Quest const* quest, uint32 reward, Object* questGiver,
+     bool rewarded = (m_RewardedQuests.find(quest_id) != m_RewardedQuests.end());
+ 
+     // Not give XP in case already completed once repeatable quest
+-    uint32 XP = rewarded && !quest->IsDFQuest() ? 0 : uint32(quest->XPValue(this)*sWorld->getRate(RATE_XP_QUEST));
++    uint32 XP = rewarded && !quest->IsDFQuest() ? 0 : uint32(quest->XPValue(this)*sWorld->getRate(RATE_XP_QUEST) * GetCustomXpRate());
+ 
+     // handle SPELL_AURA_MOD_XP_QUEST_PCT auras
+     Unit::AuraEffectList const& ModXPPctAuras = GetAuraEffectsByType(SPELL_AURA_MOD_XP_QUEST_PCT);
+diff --git a/src/server/game/Entities/Player/Player.h b/src/server/game/Entities/Player/Player.h
+index 4336e5a..97fb96b 100644
+--- a/src/server/game/Entities/Player/Player.h
++++ b/src/server/game/Entities/Player/Player.h
+@@ -2317,7 +2317,11 @@ class Player : public Unit, public GridObject<Player>
+     // 14
+     // 15
+     // 16
+-    // 17
++        void SetCustomXpRate(uint32 rate) { m_CustomXpRate = rate; }
++        uint32 GetCustomXpRate() const { return m_CustomXpRate; }
++
++        void SetCustomLootRate(uint32 rate) { m_CustomLootRate = rate; }
++        uint32 GetCustomLootRate() const { return m_CustomLootRate; }
+     // 18
+     // 19
+     // 20
+@@ -2664,7 +2668,8 @@ class Player : public Unit, public GridObject<Player>
+         // 34
+         // 35
+         // 36
+-        // 37
++        uint32 m_CustomXpRate;
++        uint32 m_CustomLootRate;
+         // 38
+         // 39
+         // 40
+diff --git a/src/server/game/Loot/LootMgr.cpp b/src/server/game/Loot/LootMgr.cpp
+index 22ebe6c..8cdee7b 100644
+--- a/src/server/game/Loot/LootMgr.cpp
++++ b/src/server/game/Loot/LootMgr.cpp
+@@ -277,17 +277,17 @@ void LootStore::ReportNonExistingId(uint32 lootId, const char* ownerType, uint32
+ 
+ // Checks if the entry (quest, non-quest, reference) takes it's chance (at loot generation)
+ // RATE_DROP_ITEMS is no longer used for all types of entries
+-bool LootStoreItem::Roll(bool rate) const
++bool LootStoreItem::Roll(bool rate, uint32 customRate) const
+ {
+     if (chance >= 100.0f)
+         return true;
+ 
+     if (reference > 0)                                   // reference case
+-        return roll_chance_f(chance* (rate ? sWorld->getRate(RATE_DROP_ITEM_REFERENCED) : 1.0f));
++        return roll_chance_f(chance* (rate ? sWorld->getRate(RATE_DROP_ITEM_REFERENCED) * customRate : 1.0f));
+ 
+     ItemTemplate const* pProto = sObjectMgr->GetItemTemplate(itemid);
+ 
+-    float qualityModifier = pProto && rate ? sWorld->getRate(qualityToRate[pProto->Quality]) : 1.0f;
++    float qualityModifier = pProto && rate ? sWorld->getRate(qualityToRate[pProto->Quality]) * customRate : 1.0f;
+ 
+     return roll_chance_f(chance*qualityModifier);
+ }
+@@ -453,7 +453,7 @@ bool Loot::FillLoot(uint32 lootId, LootStore const& store, Player* lootOwner, bo
+     items.reserve(MAX_NR_LOOT_ITEMS);
+     quest_items.reserve(MAX_NR_QUEST_ITEMS);
+ 
+-    tab->Process(*this, store.IsRatesAllowed(), lootMode);          // Processing is done there, callback via Loot::AddItem()
++    tab->Process(*this, store.IsRatesAllowed(), lootMode, 0, lootOwner->GetCustomLootRate());          // Processing is done there, callback via Loot::AddItem()
+ 
+     // Setting access rights for group loot case
+     Group* group = lootOwner->GetGroup();
+@@ -1285,7 +1285,7 @@ void LootTemplate::CopyConditions(LootItem* li) const
+ }
+ 
+ // Rolls for every item in the template and adds the rolled items the the loot
+-void LootTemplate::Process(Loot& loot, bool rate, uint16 lootMode, uint8 groupId) const
++void LootTemplate::Process(Loot& loot, bool rate, uint16 lootMode, uint8 groupId, uint32 customRate) const
+ {
+     if (groupId)                                            // Group reference uses own processing of the group
+     {
+@@ -1306,7 +1306,7 @@ void LootTemplate::Process(Loot& loot, bool rate, uint16 lootMode, uint8 groupId
+         if (!(item->lootmode & lootMode))                       // Do not add if mode mismatch
+             continue;
+ 
+-        if (!item->Roll(rate))
++        if (!item->Roll(rate, customRate))
+             continue;                                           // Bad luck for the entry
+ 
+         if (item->reference > 0)                            // References processing
+diff --git a/src/server/game/Loot/LootMgr.h b/src/server/game/Loot/LootMgr.h
+index 7d7580f..ef83c70 100644
+--- a/src/server/game/Loot/LootMgr.h
++++ b/src/server/game/Loot/LootMgr.h
+@@ -141,7 +141,7 @@ struct LootStoreItem
+         needs_quest(_needs_quest), groupid(_groupid), mincount(_mincount), maxcount(_maxcount)
+          { }
+ 
+-    bool Roll(bool rate) const;                             // Checks if the entry takes it's chance (at loot generation)
++    bool Roll(bool rate, uint32 customRate) const;                             // Checks if the entry takes it's chance (at loot generation)
+     bool IsValid(LootStore const& store, uint32 entry) const;
+                                                             // Checks correctness of values
+ };
+@@ -251,7 +251,7 @@ class LootTemplate
+         // Adds an entry to the group (at loading stage)
+         void AddEntry(LootStoreItem* item);
+         // Rolls for every item in the template and adds the rolled items the the loot
+-        void Process(Loot& loot, bool rate, uint16 lootMode, uint8 groupId = 0) const;
++        void Process(Loot& loot, bool rate, uint16 lootMode, uint8 groupId = 0, uint32 customRate = 1) const;
+         void CopyConditions(const ConditionList& conditions);
+         void CopyConditions(LootItem* li) const;
+ 
+diff --git a/src/server/game/Scripting/ScriptLoader.cpp b/src/server/game/Scripting/ScriptLoader.cpp
+index 7e5f73a..396d825 100644
+--- a/src/server/game/Scripting/ScriptLoader.cpp
++++ b/src/server/game/Scripting/ScriptLoader.cpp
+@@ -1499,7 +1499,7 @@ void AddBattlegroundScripts()
+ // start82
+ // start83
+ // start84
+-// start85
++void Add_SC_Custom_Rates();
+ // start86
+ // start87
+ // start88
+@@ -1625,7 +1625,7 @@ void AddCustomScripts()
+ // end82
+ // end83
+ // end84
+-// end85
++    Add_SC_Custom_Rates();
+ // end86
+ // end87
+ // end88
+diff --git a/src/server/game/World/World.cpp b/src/server/game/World/World.cpp
+index ae0d1d8..13f8149 100644
+--- a/src/server/game/World/World.cpp
++++ b/src/server/game/World/World.cpp
+@@ -1333,7 +1333,47 @@ void World::LoadConfigSettings(bool reload)
+ // 14
+ // 15
+ // 16
+-// 17
++    // Individual XP/loot rates
++    int sec = sConfigMgr->GetIntDefault("Player.XpRateSecurity", 0);
++    if (sec < SEC_PLAYER || sec > SEC_ADMINISTRATOR)
++    {
++        TC_LOG_INFO("server.loading", "Player.XpRateSecurity has invalid security `%i`, must be between `%i and `%i`, defaulting to 0 ...",
++            sec, SEC_PLAYER, SEC_ADMINISTRATOR);
++        m_int_configs[CONFIG_PLAYER_INDIVIDUAL_XP_RATE_SECURITY] = 0;
++    }
++    else
++        m_int_configs[CONFIG_PLAYER_INDIVIDUAL_XP_RATE_SECURITY] = sec;
++
++    sec = sConfigMgr->GetIntDefault("Player.LootRateSecurity", 0);
++    if (sec < SEC_PLAYER || sec > SEC_ADMINISTRATOR)
++    {
++        TC_LOG_INFO("server.loading", "Player.LootRateSecurity has invalid security `%i`, must be between `%i and `%i`, defaulting to 0 ...",
++            sec, SEC_PLAYER, SEC_ADMINISTRATOR);
++        m_int_configs[CONFIG_PLAYER_INDIVIDUAL_LOOT_RATE_SECURITY] = 0;
++    }
++    else
++        m_int_configs[CONFIG_PLAYER_INDIVIDUAL_LOOT_RATE_SECURITY] = sec;
++
++    int maxXpRate = sConfigMgr->GetIntDefault("Player.MaximumXpRate", 1);
++    if (maxXpRate < 1)
++    {
++        TC_LOG_INFO("server.loading", "Player.MaximumXpRate has too low value `%i`, defaulting to 1 ...", maxXpRate);
++        m_int_configs[CONFIG_PLAYER_MAXIMUM_INDIVIDUAL_XP_RATE] = 1;
++    }
++    else
++        m_int_configs[CONFIG_PLAYER_MAXIMUM_INDIVIDUAL_XP_RATE] = maxXpRate;
++
++    maxXpRate = sConfigMgr->GetIntDefault("Player.MaximumLootRate", 1);
++    if (maxXpRate < 1)
++    {
++        TC_LOG_INFO("server.loading", "Player.MaximumLootRate has too low value `%i`, defaulting to 1 ...", maxXpRate);
++        m_int_configs[CONFIG_PLAYER_MAXIMUM_INDIVIDUAL_LOOT_RATE] = 1;
++    }
++    else
++        m_int_configs[CONFIG_PLAYER_MAXIMUM_INDIVIDUAL_LOOT_RATE] = maxXpRate;
++
++    m_bool_configs[CONFIG_PLAYER_INDIVIDUAL_XP_RATE_SHOW_ON_LOGIN] = sConfigMgr->GetBoolDefault("Player.ShowXpRateOnLogin", true);
++    m_bool_configs[CONFIG_PLAYER_INDIVIDUAL_LOOT_RATE_SHOW_ON_LOGIN] = sConfigMgr->GetBoolDefault("Player.ShowLootRateOnLogin", true);
+ // 18
+ // 19
+ // 20
+diff --git a/src/server/game/World/World.h b/src/server/game/World/World.h
+index 11c527e..5f080f1 100644
+--- a/src/server/game/World/World.h
++++ b/src/server/game/World/World.h
+@@ -175,7 +175,8 @@ enum WorldBoolConfigs
+     // 14
+     // 15
+     // 16
+-    // 17
++    CONFIG_PLAYER_INDIVIDUAL_XP_RATE_SHOW_ON_LOGIN,
++    CONFIG_PLAYER_INDIVIDUAL_LOOT_RATE_SHOW_ON_LOGIN,
+     // 18
+     // 19
+     // 20
+@@ -432,7 +433,10 @@ enum WorldIntConfigs
+     // 74
+     // 75
+     // 76
+-    // 77
++    CONFIG_PLAYER_INDIVIDUAL_XP_RATE_SECURITY,
++    CONFIG_PLAYER_INDIVIDUAL_LOOT_RATE_SECURITY ,
++    CONFIG_PLAYER_MAXIMUM_INDIVIDUAL_XP_RATE,
++    CONFIG_PLAYER_MAXIMUM_INDIVIDUAL_LOOT_RATE,
+     // 78
+     // 79
+     // 80
+diff --git a/src/server/scripts/Custom/custom_rates.cpp b/src/server/scripts/Custom/custom_rates.cpp
+new file mode 100644
+index 0000000..24ed31e
+--- /dev/null
++++ b/src/server/scripts/Custom/custom_rates.cpp
+@@ -0,0 +1,315 @@
++#include "ScriptMgr.h"
++#include "Chat.h"
++#include "Language.h"
++
++class CustomRates
++{
++private:
++	static int32 GetRateFromDB(const Player *player, CharacterDatabaseStatements statement)
++	{
++		PreparedStatement *stmt = CharacterDatabase.GetPreparedStatement(statement);
++		stmt->setUInt32(0, player->GetGUID().GetCounter());
++		PreparedQueryResult result = CharacterDatabase.Query(stmt);
++
++		if (result)
++			return static_cast<int32>((*result)[0].GetUInt32());
++
++		return -1;
++	}
++
++	static void SaveRateToDB(const Player *player, uint32 rate, bool update, CharacterDatabaseStatements uStmt, CharacterDatabaseStatements iStmt)
++	{
++		if (update)
++		{
++			PreparedStatement *stmt = CharacterDatabase.GetPreparedStatement(uStmt);
++			stmt->setUInt32(0, rate);
++			stmt->setUInt32(1, player->GetGUID().GetCounter());
++			CharacterDatabase.Execute(stmt);
++		}
++		else
++		{
++			PreparedStatement *stmt = CharacterDatabase.GetPreparedStatement(iStmt);
++			stmt->setUInt32(0, player->GetGUID().GetCounter());
++			stmt->setUInt32(1, rate);
++			CharacterDatabase.Execute(stmt);
++		}
++	}
++public:
++	static void DeleteRateFromDB(ObjectGuid guid, CharacterDatabaseStatements statement)
++	{
++		PreparedStatement *stmt = CharacterDatabase.GetPreparedStatement(statement);
++		stmt->setUInt32(0, guid.GetCounter());
++		CharacterDatabase.Execute(stmt);
++	}
++
++	static int32 GetXpRateFromDB(const Player *player)
++	{
++		return GetRateFromDB(player, CHAR_SEL_INDIVIDUAL_XP_RATE);
++	}
++
++	static int32 GetLootRateFromDB(const Player *player)
++	{
++		return GetRateFromDB(player, CHAR_SEL_INDIVIDUAL_LOOT_RATE);
++	}
++
++	static void SaveXpRateToDB(const Player *player, uint32 rate, bool update)
++	{
++		SaveRateToDB(player, rate, update, CHAR_UPD_INDIVIDUAL_XP_RATE, CHAR_INS_INDIVIDUAL_XP_RATE);
++	}
++
++	static void SaveLootRateToDB(const Player *player, uint32 rate, bool update)
++	{
++		SaveRateToDB(player, rate, update, CHAR_UPD_INDIVIDUAL_LOOT_RATE, CHAR_INS_INDIVIDUAL_LOOT_RATE);
++	}
++};
++
++class add_del_rates : public PlayerScript
++{
++public:
++	add_del_rates() : PlayerScript("add_del_rates")
++	{
++	}
++
++	void OnDelete(ObjectGuid guid)
++	{
++		CustomRates::DeleteRateFromDB(guid, CHAR_DEL_INDIVIDUAL_XP_RATE);
++		CustomRates::DeleteRateFromDB(guid, CHAR_DEL_INDIVIDUAL_LOOT_RATE);
++	}
++
++	void OnLogin(Player *player)
++	{
++		// show custom XP rate on login
++		int32 rate = CustomRates::GetXpRateFromDB(player);
++
++		if (rate != -1 && player->getLevel() != sWorld->getIntConfig(CONFIG_MAX_PLAYER_LEVEL))
++		{
++			uint32 uRate = static_cast<uint32>(rate);
++			player->SetCustomXpRate(uRate);
++
++			if (sWorld->getBoolConfig(CONFIG_PLAYER_INDIVIDUAL_XP_RATE_SHOW_ON_LOGIN))
++			{
++				if (uRate)
++					ChatHandler(player->GetSession()).PSendSysMessage("|CFF7BBEF7[Custom Rates]|r: Your XP rate was set to %u.", uRate);
++				else
++					ChatHandler(player->GetSession()).SendSysMessage("|CFF7BBEF7[Custom Rates]|r: Your XP rate was set to 0. You won't gain any XP anymore.");
++			}
++		}
++
++		// show custom loot rate on login
++		rate = CustomRates::GetLootRateFromDB(player);
++		if (rate != -1)
++		{
++			uint32 uRate = static_cast<uint32>(rate);
++			player->SetCustomLootRate(uRate);
++
++			if (sWorld->getBoolConfig(CONFIG_PLAYER_INDIVIDUAL_LOOT_RATE_SHOW_ON_LOGIN))
++			{
++				if (uRate)
++					ChatHandler(player->GetSession()).PSendSysMessage("|CFF7BBEF7[Custom Rates]|r: Your loot rate was set to %u.", uRate);
++				else
++					ChatHandler(player->GetSession()).SendSysMessage("|CFF7BBEF7[Custom Rates]|r: Your loot rate was set to 0. You won't be able to loot anything.");
++			}
++		}
++	}
++};
++
++class custom_rate_commands : public CommandScript
++{
++private:
++	
++public:
++	custom_rate_commands() : CommandScript("custom_rate_commands")
++	{
++	}
++
++	ChatCommand *GetCommands() const
++	{
++		static ChatCommand rateCommandTable[] =
++		{
++			{ "xp", SEC_PLAYER, false, &HandleRateXpCommand, "", NULL },
++			{ "loot", SEC_PLAYER, false, &HandleRateLootCommand, "", NULL },
++            { NULL, SEC_PLAYER, false, NULL, "", NULL }
++		};
++
++		static ChatCommand commandTable[] =
++		{
++			{ "rate", SEC_PLAYER, false, NULL, "", rateCommandTable },
++			{ NULL, SEC_PLAYER, false, NULL, "", NULL }
++		};
++
++		return commandTable;
++	}
++
++	static bool HandleRateXpCommand(ChatHandler *handler, const char *args)
++	{
++		// take a pointer to the player who uses the command
++		Player *me = handler->GetSession() ? handler->GetSession()->GetPlayer() : NULL;
++		if (!me)
++			return false;
++
++		// already at max level, no point in using the command at all
++		if (me->getLevel() == sWorld->getIntConfig(CONFIG_MAX_PLAYER_LEVEL))
++		{
++			handler->SendSysMessage("|CFF7BBEF7[Custom Rates]|r: You are already at maximum level.");
++			return true;
++		}
++
++		// no arguments, show current XP rate
++		if (!*args)
++		{
++			handler->PSendSysMessage("|CFF7BBEF7[Custom Rates]|r: Your current XP rate is %u.", me->GetCustomXpRate());
++			return true;
++		}
++
++		// first, check if I can use the command
++		if (me->GetSession()->GetSecurity() < (int)sWorld->getIntConfig(CONFIG_PLAYER_INDIVIDUAL_XP_RATE_SECURITY))
++		{
++			handler->SendSysMessage(LANG_YOURS_SECURITY_IS_LOW);
++            handler->SetSentErrorMessage(true);
++            return false;
++		}
++
++		// take a pointer to player's selection
++		Player *target = handler->getSelectedPlayer();
++		if (!target || !target->GetSession())
++		{
++            handler->SendSysMessage(LANG_NO_CHAR_SELECTED);
++            handler->SetSentErrorMessage(true);
++            return false;
++        }
++
++		// extract value
++		int rate = atoi((char *)args);
++		int maxRate = sWorld->getIntConfig(CONFIG_PLAYER_MAXIMUM_INDIVIDUAL_XP_RATE);
++		if (rate < 0 || rate > maxRate)
++		{
++			handler->PSendSysMessage("|CFF7BBEF7[Custom Rates]|r: Invalid rate specified, must be in interval [0,%i].", maxRate);
++			handler->SetSentErrorMessage(true);
++			return false;
++		}
++
++		// take a pointer to the player we need to set xp rate to
++		// can be either player itself, or his selection, if
++		// selection security is lower than his security
++		Player *player = NULL;
++		if (target == me)
++			player = me;
++		else
++		{
++			if (me->GetSession()->GetSecurity() > target->GetSession()->GetSecurity())
++				player = target;
++			else
++			{
++				handler->SendSysMessage(LANG_YOURS_SECURITY_IS_LOW);
++				handler->SetSentErrorMessage(true);
++				return false;
++			}
++		}
++
++		// set player custom XP rate and save it in DB for later use
++		uint32 uRate = static_cast<uint32>(rate);
++		player->SetCustomXpRate(uRate);
++		int32 rateFromDB = CustomRates::GetXpRateFromDB(player);
++		if (rateFromDB == -1)
++			CustomRates::SaveXpRateToDB(player, uRate, false);
++		else
++			CustomRates::SaveXpRateToDB(player, uRate, true);
++
++		// show a message indicating custom XP rate change
++		if (player == me)
++			handler->PSendSysMessage("|CFF7BBEF7[Custom Rates]|r: You have set your XP rate to %u.", uRate);
++		else
++		{
++			handler->PSendSysMessage("|CFF7BBEF7[Custom Rates]|r: You have set %s's XP rate to %u.", handler->GetNameLink(player).c_str(), uRate);
++			ChatHandler(player->GetSession()).PSendSysMessage("|CFF7BBEF7[Custom Rates]|r: %s has set your XP rate to %u.", handler->GetNameLink().c_str(), uRate);
++		}
++
++		return true;
++	}
++
++	static bool HandleRateLootCommand(ChatHandler *handler, const char *args)
++	{
++		// take a pointer to the player who uses the command
++		Player *me = handler->GetSession() ? handler->GetSession()->GetPlayer() : NULL;
++		if (!me)
++			return false;
++
++		// no arguments, show current loot rate
++		if (!*args)
++		{
++			handler->PSendSysMessage("|CFF7BBEF7[Custom Rates]|r: Your current loot rate is %u.", me->GetCustomLootRate());
++			return true;
++		}
++
++		// first, check if I can use the command
++		if (me->GetSession()->GetSecurity() < (int)sWorld->getIntConfig(CONFIG_PLAYER_INDIVIDUAL_LOOT_RATE_SECURITY))
++		{
++			handler->SendSysMessage(LANG_YOURS_SECURITY_IS_LOW);
++            handler->SetSentErrorMessage(true);
++            return false;
++		}
++
++		// take a pointer to player's selection
++		Player *target = handler->getSelectedPlayer();
++		if (!target || !target->GetSession())
++		{
++            handler->SendSysMessage(LANG_NO_CHAR_SELECTED);
++            handler->SetSentErrorMessage(true);
++            return false;
++        }
++
++		// extract value
++		int rate = atoi((char *)args);
++		int maxRate = sWorld->getIntConfig(CONFIG_PLAYER_MAXIMUM_INDIVIDUAL_LOOT_RATE);
++		if (rate < 0 || rate > maxRate)
++		{
++			handler->PSendSysMessage("|CFF7BBEF7[Custom Rates]|r: Invalid rate specified, must be in interval [0,%i].", maxRate);
++			handler->SetSentErrorMessage(true);
++			return false;
++		}
++
++		// take a pointer to the player we need to set xp rate to
++		// can be either player itself, or his selection, if
++		// selection security is lower than his security
++		Player *player = NULL;
++		if (target == me)
++			player = me;
++		else
++		{
++			if (me->GetSession()->GetSecurity() > target->GetSession()->GetSecurity())
++				player = target;
++			else
++			{
++				handler->SendSysMessage(LANG_YOURS_SECURITY_IS_LOW);
++				handler->SetSentErrorMessage(true);
++				return false;
++			}
++		}
++
++		// set player custom loot rate and save it in DB for later use
++		uint32 uRate = static_cast<uint32>(rate);
++		player->SetCustomLootRate(uRate);
++		int32 rateFromDB = CustomRates::GetLootRateFromDB(player);
++		if (rateFromDB == -1)
++			CustomRates::SaveLootRateToDB(player, uRate, false);
++		else
++			CustomRates::SaveLootRateToDB(player, uRate, true);
++
++		// show a message indicating custom XP rate change
++		if (player == me)
++			handler->PSendSysMessage("|CFF7BBEF7[Custom Rates]|r: You have set your loot rate to %u.", uRate);
++		else
++		{
++			handler->PSendSysMessage("|CFF7BBEF7[Custom Rates]|r: You have set %s's loot rate to %u.", handler->GetNameLink(player).c_str(), uRate);
++			ChatHandler(player->GetSession()).PSendSysMessage("|CFF7BBEF7[Custom Rates]|r: %s has set your loot rate to %u.", handler->GetNameLink().c_str(), uRate);
++		}
++
++		return true;
++	}
++};
++
++void Add_SC_Custom_Rates()
++{
++	new add_del_rates();
++	new custom_rate_commands();
++}
+\ No newline at end of file
+diff --git a/src/server/worldserver/worldserver.conf.dist b/src/server/worldserver/worldserver.conf.dist
+index 4fccf90..6837e13 100644
+--- a/src/server/worldserver/worldserver.conf.dist
++++ b/src/server/worldserver/worldserver.conf.dist
+@@ -3404,6 +3404,49 @@ PacketSpoof.BanDuration = 86400
+ 
+ #
+ ###################################################################################################
++ 
++###################################################################################################
++# INDIVIDUAL PLAYER XP RATES
++#
++#    Player.XpRateSecurity
++#    Player.LootRateSecurity
++#        Description: Minimum security an account must have in order to
++#                     use .rate xp / .rate loot command
++#        Values     : 0 (player account)
++#                     1 (moderator account)
++#                     2 (gamemaster account)
++#                     3 (administrator account)
++#        Default    : 0 (every player can use the commands)
++#        Remarks    : Higher security accounts may set xp/loot rate to
++#                     lower security level accounts.
++#
++
++Player.XpRateSecurity = 0
++Player.LootRateSecurity = 0
++
++#    Player.MaximumXpRate
++#    Player.MaximumLootRate
++#        Description: Maximum individual XP / loot rate
++#        Values     : n (integer, may set xp / loot rate in range [1,n]
++#        Default    : 10
++#
++
++Player.MaximumXpRate = 10
++Player.MaximumLootRate = 10
++
++#    Player.ShowXpRateOnLogin
++#    Player.ShowLootRateOnLogin
++#        Description: Shows current XP / loot rate to player on login
++#        Values     : 0 - don't show
++#                   : 1 - show
++#        Default    : 1
++#
++
++Player.ShowXpRateOnLogin = 1
++Player.ShowLootRateOnLogin = 1
++
++#
++###################################################################################################
+ 
+ #
+ # Prepatch by LordPsyan.
+-- 
+1.7.10.4
+

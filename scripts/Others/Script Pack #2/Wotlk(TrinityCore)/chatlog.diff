@@ -1,0 +1,1321 @@
+# Date: 2014-3-18
+# Fixed: SymbolixDEV 
+# Status: Untested
+# Compile: Untested
+# Working: Untested
+
+diff -r ce99f0ba5b0f -r d4cdfd0078dd src/server/game/Scripting/ScriptLoader.cpp
+--- a/src/server/game/Scripting/ScriptLoader.cpp	Wed Apr 27 02:04:17 2011 +0400
++++ b/src/server/game/Scripting/ScriptLoader.cpp	Wed Apr 27 02:46:43 2011 +0400
+@@ -591,7 +591,7 @@
+ void AddSC_outdoorpvp_zm();
+ 
+ // player
+-void AddSC_chat_log();
++void AddSC_lexics_chat_log();
+ 
+ #endif
+ 
+@@ -677,7 +677,7 @@
+     AddSC_npc_taxi();
+     AddSC_achievement_scripts();
+ 	AddSC_script_bot_giver();
+-    AddSC_chat_log();
++    AddSC_lexics_chat_log();
+ #endif
+ }
+ 
+diff -r ce99f0ba5b0f -r d4cdfd0078dd src/server/scripts/World/CMakeLists.txt
+--- a/src/server/scripts/World/CMakeLists.txt	Wed Apr 27 02:04:17 2011 +0400
++++ b/src/server/scripts/World/CMakeLists.txt	Wed Apr 27 02:46:43 2011 +0400
+@@ -6,7 +6,6 @@
+   World/boss_lethon.cpp
+   World/boss_taerar.cpp
+   World/boss_ysondre.cpp
+-  World/chat_log.cpp
+   World/go_scripts.cpp
+   World/guards.cpp
+   World/item_scripts.cpp
+@@ -15,6 +14,8 @@
+   World/npc_professions.cpp
+   World/npc_taxi.cpp
+   World/npcs_special.cpp
++  World/ChatLog/ChatLog.cpp
++  World/ChatLog/ChatLexicsCutter.cpp
+ )
+ 
+ message("  -> Prepared: World")
+diff -r ce99f0ba5b0f -r d4cdfd0078dd src/server/scripts/World/ChatLog/ChatLexicsCutter.cpp
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/src/server/scripts/World/ChatLog/ChatLexicsCutter.cpp	Wed Apr 27 02:46:43 2011 +0400
+@@ -0,0 +1,259 @@
++/*
++ * Copyright (C) 2005-2009 MaNGOS <http://getmangos.com/>
++ *
++ * Copyright (C) 2008-2010 Trinity <http://www.trinitycore.org/>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++ */
++
++#include "Common.h"
++#include "ChatLexicsCutter.h"
++
++LexicsCutter::LexicsCutter(const std::string& sAnalogsFileName, const std::string& sInnormativeWordsFileName, bool bIgnoreMiddleSpaces, bool bIgnoreLetterRepeat)
++    : m_sInvalidChars("~`!@#$%^&*()-_+=[{]}|\\;:'\",<.>/?"), m_bIgnoreMiddleSpaces(bIgnoreMiddleSpaces), m_bIgnoreLetterRepeat(bIgnoreLetterRepeat)
++{
++    if (!_ReadLetterAnalogs(sAnalogsFileName))
++        TC_LOG_ERROR("network" Unable to open file with letter analogs '%s'", sAnalogsFileName);
++    if (!_ReadInnormativeWords(sInnormativeWordsFileName))
++        TC_LOG_ERROR("network" Unable to open file with innormative words '%s'", sInnormativeWordsFileName);
++    _MapInnormativeWords();
++}
++
++bool LexicsCutter::ReadUTF8(const std::string& in, std::string& out, unsigned int& pos)
++{
++    if (pos >= in.length())
++        return false;
++
++    out = "";
++    unsigned char c = in[pos++];
++    out += c;
++    int toread = trailingBytesForUTF8[(int) c];
++    while ((pos < in.length()) && (toread > 0))
++    {
++        out += in[pos++];
++        --toread;
++    }
++
++    return true;
++}
++
++inline void LexicsCutter::_Trim(std::string& s, const std::string& drop) const
++{
++    s.erase(s.find_last_not_of(drop) + 1);
++    s.erase(0, s.find_first_not_of(drop));
++}
++
++bool LexicsCutter::_ProcessLine(char* szLine, std::string& sLine) const
++{
++    // Check for UTF8 prefix and comments
++    if (strlen(szLine) >= 3)
++        if (szLine[0] == '\xEF' && szLine[1] == '\xBB' && szLine[2] == '\xBF')
++            strncpy(&szLine[0], &szLine[3], strlen(szLine) - 3);
++
++    if (strlen(szLine) >= 2)
++        if (szLine[0] == '/' && szLine[1] == '/')
++            return false;
++
++    // Check for empty string
++    sLine = szLine;
++    _Trim(sLine, "\x0A\x0D\x20");
++    if (sLine.empty())
++        return false;
++
++    // Process line without CR/LF
++    sLine = szLine;
++    _Trim(sLine, "\x0A\x0D");
++    return true;
++}
++
++bool LexicsCutter::_ReadLetterAnalogs(const std::string& fileName)
++{
++    char szLine[1024];
++
++    FILE* file = fopen(fileName.c_str(), "rb");
++    if (!file)
++        return false;
++
++    while (!feof(file))
++    {
++        szLine[0] = 0x0;
++        fgets(szLine, 1020, file);
++
++        std::string sLine;
++        if (!_ProcessLine(szLine, sLine))
++            continue;
++
++        std::string sChar;
++        unsigned int pos = 0;
++        if (ReadUTF8(sLine, sChar, pos))
++        {
++            // Create analogs vector
++            std::string sAnalog;
++            LC_AnalogVector av;
++            while (ReadUTF8(sLine, sAnalog, pos))
++                av.push_back(sAnalog);
++
++            // Store vector in hash map
++            m_AnalogMap[sChar] = av;
++        }
++    }
++    fclose(file);
++    return true;
++}
++
++bool LexicsCutter::_ReadInnormativeWords(const std::string& fileName)
++{
++    char szLine[1024];
++
++    FILE* file = fopen(fileName.c_str(), "rb");
++    if (!file)
++        return false;
++
++    while (!feof(file))
++    {
++        szLine[0] = 0x0;
++        fgets(szLine, 1020, file);
++
++        std::string sLine;
++        if (!_ProcessLine(szLine, sLine))
++            continue;
++
++        // Create word vector of vectors
++        LC_WordVector vw;
++        std::string sChar;
++        unsigned int pos = 0;
++        while (ReadUTF8(sLine, sChar, pos))
++        {
++            LC_LetterSet vl;
++
++            // Initialize letter set with letter read
++            vl.insert(sChar);
++
++            // Find letter analogs and push them onto the vector
++            LC_AnalogMap::iterator itr = m_AnalogMap.find(sChar);
++            if (itr != m_AnalogMap.end())
++                // Analogs present, iterate
++                for (LC_AnalogVector::iterator itr2 = itr->second.begin(); itr2 != itr->second.end(); itr2++)
++                    vl.insert(*itr2);
++
++            // Add letter vector to word vector
++            vw.push_back(vl);
++        }
++
++        // Push new word to words list
++        m_WordList.push_back(vw);
++    }
++    fclose(file);
++    return true;
++}
++
++void LexicsCutter::_MapInnormativeWords()
++{
++    // Process all the words in the vector
++    for (uint32 i = 0; i < m_WordList.size(); ++i)
++        // Parse all analogs in the first word letter
++        for (LC_LetterSet::iterator itr = (*m_WordList[i].begin()).begin(); itr != (*m_WordList[i].begin()).end(); ++itr)
++            // Map the word to its first letter variants
++            m_WordMap.insert(std::pair <std::string, uint32> (*itr, i));
++}
++
++bool LexicsCutter::_CompareWord(const std::string& str, unsigned int pos, LC_WordVector word) const
++{
++    std::string sCharPrev;
++    std::string sChar;
++
++    // Read first letter of the word into lchar_prev
++    ReadUTF8(str, sChar, pos);
++
++    // Compare word //SymbolixDEV 
++    // First letter is already okay, we do begin from second and go on
++    LC_WordVector::iterator i = word.begin();
++    i++;
++    while (i != word.end())
++    {
++        // Get letter from word, return false if the string is shorter
++        if (!ReadUTF8(str, sChar, pos))
++            return false;
++        // Check, if the letter is in the set
++        LC_LetterSet ls = *i;
++        if (ls.count(sChar) == 0)
++        {
++            // Letter is not in set, but we must check, if it is not space or repeat
++            if ((!(m_bIgnoreMiddleSpaces && (sChar == " "))) &&
++                (!(m_bIgnoreLetterRepeat && (sChar == sCharPrev))))
++            {
++                // No checks viable
++                return false;
++            }
++        }
++        else
++            // Next word letter
++            i++;
++
++        // Set previous string letter to compare if needed (this check can really conserve time)
++        if (m_bIgnoreLetterRepeat)
++            sCharPrev = sChar;
++    }
++    return true;
++}
++
++bool LexicsCutter::CheckLexics(const std::string& msg)
++{
++    std::string sChar;
++    LC_WordMap::iterator i;
++    std::pair<LC_WordMap::iterator, LC_WordMap::iterator> ii;
++
++    if (msg.size() == 0)
++        return false;
++
++    // Remove links |cffffffff|H<entity>:<id>|h[<name>]|h|r
++    std::string s(msg);
++    unsigned int offset = 0;
++    unsigned int start = -1;
++    while ((start = s.find("|cffffffff|H", offset)) != -1)
++    {
++        unsigned int end = s.find("|h|r", start);
++        if (end == -1)
++            break;
++
++        s = s.replace(start, end + 4 - start, "");
++        offset = start;
++    }
++
++    // First, convert the string, adding spaces and removing invalid characters.
++    // Also create fast position vector for the new positions
++    std::string str(" ");
++    unsigned int pos = 0;
++    while (ReadUTF8(s, sChar, pos))
++        if (m_sInvalidChars.find(sChar) == std::string::npos)
++            str.append(sChar);
++
++    // String prepared, now parse it and scan for all the words
++    unsigned int pos_prev = 0;
++    pos = 0;
++    while (ReadUTF8(str, sChar, pos))
++    {
++        // Got character, now try to find wordmap for it
++        ii = m_WordMap.equal_range(sChar);
++        // Iterate over all found words
++        for (i = ii.first; i != ii.second; i++)
++            // Compare word at initial position
++            if (_CompareWord(str, pos_prev, m_WordList[i->second]))
++                return true;
++        // Set initial position to the current position
++        pos_prev = pos;
++    }
++    return false;
++}
+diff -r ce99f0ba5b0f -r d4cdfd0078dd src/server/scripts/World/ChatLog/ChatLexicsCutter.h
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/src/server/scripts/World/ChatLog/ChatLexicsCutter.h	Wed Apr 27 02:46:43 2011 +0400
+@@ -0,0 +1,70 @@
++/* //SymbolixDEV
++ * Copyright (C) 2005-2009 MaNGOS <http://getmangos.com/>
++ *//SymbolixDEV
++ * Copyright (C) 2008-2010 Trinity <http://www.trinitycore.org/>
++ *//SymbolixDEV
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *//SymbolixDEV
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++ */
++//SymbolixDEV
++#ifndef TRINITY_CHATLEXICSCUTTER_H
++#define TRINITY_CHATLEXICSCUTTER_H
++//SymbolixDEV
++typedef std::vector <std::string> LC_AnalogVector;
++typedef std::map <std::string, LC_AnalogVector> LC_AnalogMap;
++typedef std::set <std::string> LC_LetterSet;
++typedef std::vector <LC_LetterSet> LC_WordVector;
++typedef std::vector <LC_WordVector> LC_WordList;
++typedef std::multimap <std::string, uint32> LC_WordMap;
++//SymbolixDEV
++static int trailingBytesForUTF8[256] = {
++    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
++    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
++    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
++    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
++    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
++    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
++    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1, 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
++    2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2, 3,3,3,3,3,3,3,3,4,4,4,4,5,5,5,5
++};
++//SymbolixDEV//SymbolixDEV//SymbolixDEVV//SymbolixDEVV//SymbolixDEVVV//SymbolixDEVV//SymbolixDEVVV
++class LexicsCutter
++{
++protected:
++    LC_AnalogMap m_AnalogMap;
++    LC_WordList m_WordList;
++    LC_WordMap m_WordMap;
++//SymbolixDEV
++    std::string m_sInvalidChars;
++    bool m_bIgnoreMiddleSpaces;
++    bool m_bIgnoreLetterRepeat;
++//SymbolixDEV
++    void _Trim(std::string& s, const std::string& drop = " ") const;
++    bool _CompareWord(const std::string& str, unsigned int pos, LC_WordVector word) const;
++    bool _ProcessLine(char* szLine, std::string& sLine) const;
++//SymbolixDEV
++    bool _ReadLetterAnalogs(const std::string& fileName);
++    bool _ReadInnormativeWords(const std::string& fileName);
++    void _MapInnormativeWords();
++//SymbolixDEV
++public:
++    LexicsCutter(const std::string& sAnalogsFileName, const std::string& sInnormativeWordsFileName, bool bIgnoreMiddleSpaces, bool bIgnoreLetterRepeat);
++//SymbolixDEV
++    static bool ReadUTF8(const std::string& in, std::string& out, unsigned int& pos);
++    //SymbolixDEV
++    bool CheckLexics(const std::string& phrase);
++};
++
++#endif
++
+diff -r ce99f0ba5b0f -r d4cdfd0078dd src/server/scripts/World/ChatLog/ChatLog.cpp
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/src/server/scripts/World/ChatLog/ChatLog.cpp	Wed Apr 27 02:46:43 2011 +0400
+@@ -0,0 +1,474 @@
++/*
++ * Copyright (C) 2005-2009 MaNGOS <http://getmangos.com/>
++ *
++ * Copyright (C) 2008-2014 Trinity <http://www.trinitycore.org/>
++ * SymbolixDEV
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ * SymbolixDEV
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ * SymbolixDEV
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++ */
++ // SymbolixDEV
++#include "Common.h"
++#include "ChatLexicsCutter.h"
++#include "ChatLog.h"
++#include "Chat.h"
++#include "Group.h"
++#include "Guild.h"
++#include "Channel.h"
++#include "ObjectMgr.h"
++#include "SpellAuras.h"
++#include "Config.h"
++
++ChatLogInfo::ChatLogInfo(ChatLogType type, bool bChat, bool bLexics) : 
++    m_file(NULL), m_screenFlag(false), m_cutFlag(false), m_type(type)
++{
++    std::string sType = ChatLog::GetChatNameByType(type);
++    if (bChat)
++    {
++        m_name = sConfig->GetStringDefault(std::string("ChatLog." + sType + ".File").c_str(), "");
++        m_screenFlag = sConfig->GetBoolDefault(std::string("ChatLog." + sType + ".Screen").c_str(), false);
++    }
++
++    if (bLexics)
++        m_cutFlag = sConfig->GetBoolDefault(std::string("ChatLog.Lexics." + sType + ".Cut").c_str(), true);
++}
++
++void ChatLogInfo::OpenFile(bool bDateSplit, const std::string& sDate, bool bUTFHeader)
++{
++    if (!m_name.empty() && !m_file)
++    {
++        std::string tmp(m_name);
++        if (bDateSplit)
++        {
++            // Replace $d with date value if applicable
++            int dpos = tmp.find("$d");
++            if (dpos != tmp.npos)
++                tmp.replace(dpos, 2, sDate.c_str(), sDate.size());
++        }
++        m_file = fopen(tmp.c_str(), "a+b");
++        if (m_file)
++        {
++            if (bUTFHeader && ftell(m_file) == 0)
++                fputs("\xEF\xBB\xBF", m_file);
++
++            std::string s("[SYSTEM] " + ChatLog::GetChatDescByType(m_type) + " Log Initialized\n");
++            WriteFile(s);
++        }
++    }
++}
++
++void ChatLogInfo::WriteFile(const std::string& msg)
++{
++    ACE_Guard<ACE_Thread_Mutex> guard(m_lock);
++    if (m_file)
++    {
++        ChatLog::OutTimestamp(m_file);
++        fprintf(m_file, "%s\n", msg.c_str());
++        fflush(m_file);
++    }
++}
++
++std::string ChatLog::GetChatNameByType(ChatLogType type)
++{
++    switch (type)
++    {
++        case CHAT_LOG_CHAT: return "Chat";
++        case CHAT_LOG_PARTY: return "Party";
++        case CHAT_LOG_GUILD: return "Guild";
++        case CHAT_LOG_WHISPER: return "Whisper";
++        case CHAT_LOG_CHANNEL: return "Channel";
++        case CHAT_LOG_RAID: return "Raid";
++        case CHAT_LOG_BATTLEGROUND: return "BattleGround";
++        case CHAT_LOG_INNORMATIVE: return "Lexics.Innormative";
++        default: return "Unknown";
++    }
++}
++
++std::string ChatLog::GetChatDescByType(ChatLogType type)
++{
++    switch (type)
++    {
++        case CHAT_LOG_CHAT: return "Chat";
++        case CHAT_LOG_PARTY: return "Party Chat";
++        case CHAT_LOG_GUILD: return "Guild Chat";
++        case CHAT_LOG_WHISPER: return "Whisper";
++        case CHAT_LOG_CHANNEL: return "Channels";
++        case CHAT_LOG_RAID: return "Raid Chat";
++        case CHAT_LOG_BATTLEGROUND: return "Battleground Chat";
++        case CHAT_LOG_INNORMATIVE: return "Lexics Innormative";
++        default: return "Unknown";
++    }
++}
++
++void ChatLog::OutTimestamp(FILE* file)
++{
++    time_t t = time(NULL);
++    tm* aTm = localtime(&t);
++    fprintf(file, "%-4d-%02d-%02d %02d:%02d:%02d ", aTm->tm_year + 1900, aTm->tm_mon + 1, aTm->tm_mday, aTm->tm_hour, aTm->tm_min, aTm->tm_sec);
++}
++
++ChatLog::ChatLog() : PlayerScript("LexicsChatLog"), m_pLexics(NULL), m_pInnormative(NULL)
++{
++    _Initialize();
++}
++
++ChatLog::~ChatLog()
++{
++    // Close all files (avoiding double-close)
++    _CloseAllFiles();
++
++    if (m_pLexics)
++    {
++        delete m_pLexics;
++        m_pLexics = NULL;
++    }
++    for (uint32 i = CHAT_LOG_CHAT; i < CHAT_LOG_COUNT; i++)
++        delete m_pLogs[i];
++}
++
++void ChatLog::_Initialize()
++{
++    // Load config settings
++    m_bChatLogEnable = sConfig->GetBoolDefault("ChatLog.Enable", true);
++    m_bChatLogDateSplit = sConfig->GetBoolDefault("ChatLog.DateSplit", true);
++    m_bChatLogUTFHeader = sConfig->GetBoolDefault("ChatLog.UTFHeader", true);
++    m_bChatLogIgnoreUnprintable = sConfig->GetBoolDefault("ChatLog.Ignore.Unprintable", true);
++
++    m_bLexicsEnable = sConfig->GetBoolDefault("ChatLog.Lexics.Enable", true);
++    if (m_bLexicsEnable)
++    {
++        std::string sAnalogsFileName = sConfig->GetStringDefault("ChatLog.Lexics.AnalogsFile", "");
++        std::string sInnormativeWordsFileName = sConfig->GetStringDefault("ChatLog.Lexics.WordsFile", "");
++
++        m_pInnormative = new ChatLogInfo(CHAT_LOG_INNORMATIVE, true, false);
++        if (sAnalogsFileName.empty() || sInnormativeWordsFileName.empty())
++            m_bLexicsEnable = false;
++        else
++        {
++            // Initialize lexics cutter parameters
++            m_bLexicsInnormativeCut = sConfig->GetBoolDefault("ChatLog.Lexics.Cut.Enable", true);
++            m_sLexicsCutReplacement = sConfig->GetStringDefault("ChatLog.Lexics.Cut.Replacement", "&!@^%!^&*!!!");
++            m_LexicsAction = LexicsActions(sConfig->GetIntDefault("ChatLog.Lexics.Action", LEXICS_ACTION_LOG));
++            m_unLexicsActionDuration = sConfig->GetIntDefault("ChatLog.Lexics.Action.Duration", 0);
++
++            // Initialize lexics cutter object
++            m_pLexics = new LexicsCutter(sAnalogsFileName, sInnormativeWordsFileName,
++                sConfig->GetBoolDefault("ChatLog.Lexics.Ignore.Spaces", true),
++                sConfig->GetBoolDefault("ChatLog.Lexics.Ignore.Repeats", true));
++
++            // Read additional parameters
++            m_bLexicsIgnoreGM = sConfig->GetBoolDefault("ChatLog.Lexics.Ignore.GM", true);
++        }
++    }
++
++    for (uint32 i = CHAT_LOG_CHAT; i < CHAT_LOG_COUNT; i++)
++        m_pLogs[i] = new ChatLogInfo(ChatLogType(i), m_bChatLogEnable, m_bLexicsEnable);
++
++    _OpenAllFiles();
++}
++
++void ChatLog::_OpenAllFiles()
++{
++    ACE_Guard<ACE_Thread_Mutex> guard(m_lock);
++    std::string sDate;
++    if (m_bChatLogDateSplit)
++    {
++        time_t t = time(NULL);
++        tm* aTm = localtime(&t);
++        char szDate[12];
++        sprintf(szDate, "%-4d-%02d-%02d", aTm->tm_year + 1900, aTm->tm_mon + 1, aTm->tm_mday);
++        sDate = szDate;
++
++        m_nLastDay = aTm->tm_mday;
++    }
++
++    if (m_bChatLogEnable)
++    {
++        for (uint32 i = CHAT_LOG_CHAT; i <= CHAT_LOG_COUNT - 1; ++i)
++        {
++            for (uint32 j = i - 1; j >= CHAT_LOG_CHAT; --j)
++                if (m_pLogs[i]->SetFileIfSame(m_pLogs[j]))
++                    break;
++            m_pLogs[i]->OpenFile(m_bChatLogDateSplit, sDate, m_bChatLogUTFHeader);
++        }
++    }
++
++    // Initialize innormative log
++    if (m_bLexicsEnable && m_pInnormative)
++        m_pInnormative->OpenFile(m_bChatLogDateSplit, sDate, m_bChatLogUTFHeader);
++}
++
++void ChatLog::_CloseAllFiles()
++{
++    ACE_Guard<ACE_Thread_Mutex> guard(m_lock);
++    for (uint32 i = CHAT_LOG_CHAT; i <= CHAT_LOG_COUNT - 1; ++i)
++    {
++        if (m_pLogs[i]->GetFile())
++        {
++            for (uint32 j = i + 1; j <= CHAT_LOG_COUNT - 1; ++j)
++                m_pLogs[j]->CloseFileIfSame(m_pLogs[i]);
++            m_pLogs[i]->CloseFile();
++        }
++    }
++
++    if (m_pInnormative)
++        m_pInnormative->CloseFile();
++}
++
++void ChatLog::_CheckDateSwitch()
++{
++    if (m_bChatLogDateSplit)
++    {
++        time_t t = time(NULL);
++        tm* aTm = localtime(&t);
++        if (m_nLastDay != aTm->tm_mday)
++        {
++            // Open new files for new date
++            _CloseAllFiles();
++            _OpenAllFiles();
++        }
++    }
++}
++
++bool ChatLog::_ChatCommon(ChatLogType type, Player* player, std::string& msg)
++{
++    // Check message for innormative lexics and punish if necessary.
++    if (m_bLexicsEnable && m_pLexics && m_pLogs[type]->IsCut() && m_pLexics->CheckLexics(msg)) 
++        _Punish(player, msg);
++
++    if (!m_bChatLogEnable)
++        return false;
++
++    if (m_bChatLogIgnoreUnprintable)
++    {
++        // If should ignore unprintables, verify string by UTF8 here
++        unsigned int pos = 0;
++        std::string sChar;
++        while (LexicsCutter::ReadUTF8(msg, sChar, pos))
++            if (sChar.size() == 1)
++                if (sChar[0] < ' ')
++                    return false ; // Unprintable detected
++    }
++
++    return true;
++}
++
++void ChatLog::_Punish(Player* player, std::string& msg)
++{
++    std::string logStr;
++
++    _AppendPlayerName(player, logStr);
++    _WriteLog(m_pInnormative, logStr, msg, msg);
++
++    // Check if should ignore GM
++    if (m_bLexicsIgnoreGM && (player->GetSession()->GetSecurity() > SEC_PLAYER))
++        return;
++
++    // Cut innormative lexics
++    if (m_bLexicsInnormativeCut)
++        msg = m_sLexicsCutReplacement;
++
++    if (!player || !player->GetSession())
++        return;
++
++    // special action
++    switch (m_LexicsAction)
++    {
++        case LEXICS_ACTION_SHEEP:       _ApplySpell(player, 118);   break;
++        case LEXICS_ACTION_STUN:        _ApplySpell(player, 13005); break;
++        case LEXICS_ACTION_STUCK:       _ApplySpell(player, 23312); break;
++        case LEXICS_ACTION_SICKNESS:    _ApplySpell(player, 15007); break;
++        case LEXICS_ACTION_SHEAR:       _ApplySpell(player, 41032); break;
++        case LEXICS_ACTION_DIE:
++            player->DealDamage(player, player->GetHealth(), NULL, DIRECT_DAMAGE, SPELL_SCHOOL_MASK_NORMAL, NULL, false);
++            break;
++        case LEXICS_ACTION_DRAIN:
++            player->DealDamage(player, player->GetHealth() - 5, NULL, DIRECT_DAMAGE, SPELL_SCHOOL_MASK_NORMAL, NULL, false);
++            break;
++        case LEXICS_ACTION_SILENCE:
++            player->GetSession()->m_muteTime = time(NULL) + int64(m_unLexicsActionDuration / 1000);
++            break;
++        default:
++            // No action except logging
++            break;
++    }
++}
++
++inline void ChatLog::_ApplySpell(Player *pPlayer, uint32 spellId)
++{
++    if (Aura *a = pPlayer->AddAura(spellId, pPlayer))
++        a->SetDuration(m_unLexicsActionDuration);
++}
++
++inline void ChatLog::_WriteLog(ChatLogInfo* pLog, std::string& logStr, const std::string& msg, const std::string& origMsg)
++{
++    if (!pLog)
++        return;
++
++    if (pLog->IsScreen())
++        printf("%s %s", logStr.c_str(), msg.c_str());
++
++    _CheckDateSwitch();
++    logStr.append(" ").append(origMsg);
++    pLog->WriteFile(logStr);
++}
++
++inline void ChatLog::_AppendPlayerName(Player* player, std::string& s)
++{
++    s.append("[").append(player ? player->GetName() : "???").append("]");
++}
++
++inline void ChatLog::_AppendGroupMembers(Group* group, std::string& s)
++{
++    if (!group)
++        s.append(" {unknown group}:");
++    else
++    {
++        char sz[32];
++        sprintf(sz, UI64FMTD, group->GetGUID());
++        s.append(" {").append(sz).append("} [");
++        uint64 leaderGUID = group->GetLeaderGUID();
++        if (Player* pLeader = sObjectMgr->GetPlayer(leaderGUID))
++            s.append(pLeader->GetName());
++
++        Group::MemberSlotList members = group->GetMemberSlots();
++        for (Group::member_citerator itr = members.begin(); itr != members.end(); ++itr)
++        {
++            if (itr->guid == leaderGUID)
++                continue;
++
++            if (Player* pMember = sObjectMgr->GetPlayer(itr->guid))
++                s.append(",").append(pMember->GetName());
++        }
++        s.append("]:");
++    }
++}
++
++void ChatLog::OnChat(Player* player, uint32 type, uint32 /*lang*/, std::string& msg)
++{
++    std::string origMsg(msg);
++    if (!_ChatCommon(CHAT_LOG_CHAT, player, msg))
++        return;
++
++    std::string logStr;
++    switch (type)
++    {
++        case CHAT_MSG_SAY: logStr.append("{SAY}"); break;
++        case CHAT_MSG_EMOTE: logStr.append("{EMOTE}"); break;
++        case CHAT_MSG_YELL: logStr.append("{YELL}"); break;
++    }
++    _AppendPlayerName(player, logStr);
++    _WriteLog(m_pLogs[CHAT_LOG_CHAT], logStr, msg, origMsg);
++}
++
++void ChatLog::OnChat(Player* player, uint32 /*type*/, uint32 /*lang*/, std::string& msg, Player* receiver)
++{
++    std::string origMsg(msg);
++    if (!_ChatCommon(CHAT_LOG_WHISPER, player, msg))
++        return;
++
++    std::string logStr;
++    _AppendPlayerName(player, logStr);
++    logStr.append("->");
++    _AppendPlayerName(receiver, logStr);
++
++    _WriteLog(m_pLogs[CHAT_LOG_WHISPER], logStr, msg, origMsg);
++}
++
++void ChatLog::OnChat(Player* player, uint32 type, uint32 /*lang*/, std::string& msg, Group* group)
++{
++    std::string origMsg(msg);
++    std::string logStr;
++    _AppendPlayerName(player, logStr);
++
++    switch (type)
++    {
++    case CHAT_MSG_PARTY:
++    case CHAT_MSG_PARTY_LEADER:
++        if (_ChatCommon(CHAT_LOG_PARTY, player, msg))
++        {
++            switch (type)
++            {
++                case CHAT_MSG_PARTY:        logStr.append("->PARTY");         break;
++                case CHAT_MSG_PARTY_LEADER: logStr.append("->PARTY_LEADER");  break;
++            }
++            _AppendGroupMembers(group, logStr);
++            _WriteLog(m_pLogs[CHAT_LOG_PARTY], logStr, msg, origMsg);
++        }
++        break;
++    case CHAT_MSG_RAID_LEADER:
++    case CHAT_MSG_RAID_WARNING:
++    case CHAT_MSG_RAID:
++        if (_ChatCommon(CHAT_LOG_RAID, player, msg))
++        {
++            switch (type)
++            {
++                case CHAT_MSG_RAID_LEADER:  logStr.append("->RAID_LEADER");
++                case CHAT_MSG_RAID_WARNING: logStr.append("->RAID_WARN");
++                case CHAT_MSG_RAID:         logStr.append("->RAID");
++            }
++            _AppendGroupMembers(group, logStr);
++            _WriteLog(m_pLogs[CHAT_LOG_RAID], logStr, msg, origMsg);
++        }
++        break;
++    case CHAT_MSG_BATTLEGROUND:
++    case CHAT_MSG_BATTLEGROUND_LEADER:
++        if (_ChatCommon(CHAT_LOG_BATTLEGROUND, player, msg))
++        {
++            switch (type)
++            {
++                case CHAT_MSG_BATTLEGROUND:         logStr.append("->BG");         break;
++                case CHAT_MSG_BATTLEGROUND_LEADER:  logStr.append("->BG_LEADER");  break;
++            }
++            _AppendGroupMembers(group, logStr);
++            _WriteLog(m_pLogs[CHAT_LOG_BATTLEGROUND], logStr, msg, origMsg);
++        }
++        break;
++    }
++}
++
++void ChatLog::OnChat(Player* player, uint32 type, uint32 lang, std::string& msg, Guild* guild)
++{
++    std::string origMsg(msg);
++    if (!_ChatCommon(CHAT_LOG_GUILD, player, msg))
++        return;
++
++    std::string logStr;
++    _AppendPlayerName(player, logStr);
++    switch (type)
++    {
++        case CHAT_MSG_GUILD:    logStr.append("->GUILD");      break;
++        case CHAT_MSG_OFFICER:  logStr.append("->GUILD_OFF");  break;
++    }
++    logStr.append(" {").append(guild ? guild->GetName() : "unknowng guild").append("}:");
++
++    _WriteLog(m_pLogs[CHAT_LOG_GUILD], logStr, msg, origMsg);
++}
++
++void ChatLog::OnChat(Player *player, uint32 /*type*/, uint32 /*lang*/, std::string& msg, Channel* channel)
++{
++    std::string origMsg(msg);
++    if (!_ChatCommon(CHAT_LOG_CHANNEL, player, msg))
++        return;
++
++    std::string logStr;
++    _AppendPlayerName(player, logStr);
++    logStr.append(" {").append(channel ? channel->GetName() : "Unknown channel").append("}");
++
++    _WriteLog(m_pLogs[CHAT_LOG_CHANNEL], logStr, msg, origMsg);
++}
++
++void AddSC_lexics_chat_log()
++{
++    new ChatLog();
++}
+diff -r ce99f0ba5b0f -r d4cdfd0078dd src/server/scripts/World/ChatLog/ChatLog.h
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/src/server/scripts/World/ChatLog/ChatLog.h	Wed Apr 27 02:46:43 2011 +0400
+@@ -0,0 +1,156 @@
++/*
++ * Copyright (C) 2005-2009 MaNGOS <http://getmangos.com/>
++ *
++ * Copyright (C) 2008-2014 Trinity <http://www.trinitycore.org/>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++ */
++
++#ifndef TRINITYCORE_CHATLOG_H
++#define TRINITYCORE_CHATLOG_H
++
++#include "ScriptPCH.h"
++#include "ChatLexicsCutter.h"
++
++enum ChatLogType
++{
++    CHAT_LOG_NONE,
++    CHAT_LOG_CHAT,
++    CHAT_LOG_PARTY,
++    CHAT_LOG_GUILD,
++    CHAT_LOG_WHISPER,
++    CHAT_LOG_CHANNEL,
++    CHAT_LOG_RAID,
++    CHAT_LOG_BATTLEGROUND,
++
++    CHAT_LOG_COUNT,
++    CHAT_LOG_INNORMATIVE
++};
++
++enum LexicsActions
++{
++    LEXICS_ACTION_LOG,
++    LEXICS_ACTION_SHEEP,
++    LEXICS_ACTION_STUN,
++    LEXICS_ACTION_DIE,
++    LEXICS_ACTION_DRAIN,
++    LEXICS_ACTION_SILENCE,
++    LEXICS_ACTION_STUCK,
++    LEXICS_ACTION_SICKNESS,
++    LEXICS_ACTION_SHEAR,
++};
++
++class ChatLogInfo
++{
++private:
++    FILE *m_file;
++    std::string m_name;
++    bool m_screenFlag;
++    bool m_cutFlag;
++    ChatLogType m_type;
++    ACE_Thread_Mutex m_lock;
++
++public:
++    ChatLogInfo(ChatLogType type, bool bChat, bool bLexics);
++
++    void OpenFile(bool bDateSplit, const std::string& sDate, bool bUTFHeader);
++    void CloseFile()
++    {
++        ACE_Guard<ACE_Thread_Mutex> guard(m_lock);
++        if (m_file)
++        {
++            fclose(m_file);
++            m_file = NULL;
++        }
++    }
++    void WriteFile(const std::string& msg);
++
++    FILE* GetFile() const { return m_file; }
++    std::string GetName() const { return m_name; }
++    bool IsCut() const { return m_cutFlag; }
++    bool IsScreen() const { return m_screenFlag; }
++
++    bool SetFileIfSame(ChatLogInfo* pLog)
++    {
++        if (m_name == pLog->GetName())
++        {
++            m_file = pLog->GetFile();
++            return true;
++        }
++        return false;
++    }
++    void CloseFileIfSame(ChatLogInfo* pLog)
++    {
++        if (m_file == pLog->GetFile())
++            m_file = NULL;
++    }
++};
++
++class ChatLog : public PlayerScript
++{
++public:
++    static std::string GetChatNameByType(ChatLogType type);
++    static std::string GetChatDescByType(ChatLogType type);
++    static void OutTimestamp(FILE *file);
++
++    ChatLog();
++    ~ChatLog();
++
++    void OnChat(Player* player, uint32 type, uint32 lang, std::string& msg);
++    void OnChat(Player *player, uint32 type, uint32 lang, std::string& msg, Player *receiver);
++    void OnChat(Player *player, uint32 type, uint32 lang, std::string& msg, Group *group);
++    void OnChat(Player *player, uint32 type, uint32 lang, std::string& msg, Guild *guild);
++    void OnChat(Player *player, uint32 type, uint32 lang, std::string& msg, Channel *channel);
++
++private:
++    bool _ChatCommon(ChatLogType type, Player *player, std::string &msg);
++    void _Punish(Player* player, std::string& msg);
++    void _ApplySpell(Player *player, uint32 spellId);
++
++    void _Initialize();
++    void _OpenAllFiles();
++    void _CloseAllFiles();
++    void _CheckDateSwitch();
++    void _AppendPlayerName(Player* player, std::string& s);
++    void _AppendGroupMembers(Group* group, std::string& s);
++    void _WriteLog(ChatLogInfo* pLog, std::string& logStr, const std::string& msg, const std::string& origMsg);
++
++    // Chats
++    bool m_bChatLogEnable;
++    bool m_bChatLogDateSplit;
++    bool m_bChatLogUTFHeader;
++    bool m_bChatLogIgnoreUnprintable;
++
++    int32 m_nLastDay;
++
++    ChatLogInfo* m_pLogs[CHAT_LOG_COUNT];
++
++    // Lexics
++    LexicsCutter* m_pLexics;
++
++    bool m_bLexicsEnable;
++    bool m_bLexicsInnormativeCut;
++    bool m_bLexicsIgnoreGM;
++
++    std::string m_sLexicsCutReplacement;
++    LexicsActions m_LexicsAction;
++    uint32 m_unLexicsActionDuration;
++
++    ChatLogInfo* m_pInnormative;
++    ACE_Thread_Mutex m_lock;
++};
++
++#define sChatLog (*ACE_Singleton<ChatLog, ACE_Thread_Mutex>::instance())
++#endif
+diff -r ce99f0ba5b0f -r d4cdfd0078dd src/server/worldserver/CMakeLists.txt
+--- a/src/server/worldserver/CMakeLists.txt	Wed Apr 27 02:04:17 2011 +0400
++++ b/src/server/worldserver/CMakeLists.txt	Wed Apr 27 02:46:43 2011 +0400
+@@ -180,15 +180,21 @@
+   add_custom_command(TARGET worldserver
+     POST_BUILD
+     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/worldserver.conf.dist ${CMAKE_BINARY_DIR}/bin/$(ConfigurationName)/
++    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/innormative_words.txt.dist ${CMAKE_BINARY_DIR}/bin/$(ConfigurationName)/
++    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/letter_analogs.txt.dist ${CMAKE_BINARY_DIR}/bin/$(ConfigurationName)/
+   )
+ endif()
+ 
+ if( UNIX )
+   install(TARGETS worldserver DESTINATION bin)
+   install(FILES worldserver.conf.dist DESTINATION etc)
++  install(FILES innormative_words.txt.dist DESTINATION bin)
++  install(FILES letter_analogs.txt.dist DESTINATION bin)
+ elseif( WIN32 )
+   install(TARGETS worldserver DESTINATION "${CMAKE_INSTALL_PREFIX}")
+   install(FILES worldserver.conf.dist DESTINATION "${CMAKE_INSTALL_PREFIX}")
++  install(FILES innormative_words.txt.dist DESTINATION "${CMAKE_INSTALL_PREFIX}")
++  install(FILES letter_analogs.txt.dist DESTINATION "${CMAKE_INSTALL_PREFIX}")
+ endif()
+ 
+ # Generate precompiled header
+diff -r ce99f0ba5b0f -r d4cdfd0078dd src/server/worldserver/innormative_words.txt.dist
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/src/server/worldserver/innormative_words.txt.dist	Wed Apr 27 02:46:43 2011 +0400
+@@ -0,0 +1,1 @@
++
+diff -r ce99f0ba5b0f -r d4cdfd0078dd src/server/worldserver/letter_analogs.txt.dist
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/src/server/worldserver/letter_analogs.txt.dist	Wed Apr 27 02:46:43 2011 +0400
+@@ -0,0 +1,59 @@
++?пїЅ??aA
++?пїЅ?пїЅbB6
++???пїЅvVwWB
++???пїЅgGr
++???пїЅdDg
++?пїЅ?пїЅ?пїЅ??eE3
++?пїЅ???пїЅ?пїЅeE3
++?пїЅ?пїЅzZ
++?пїЅ?пїЅzZ3
++???????пїЅiIuU1
++???пїЅ????iIjJuU1
++????kK
++?пїЅ?пїЅlL1
++????mM
++????nNhH
++????oO0Q
++????pPn
++???пїЅrRpP
++????cC
++?пїЅ??tT7
++????uUyY
++?пїЅ?пїЅfF
++?пїЅ??hHxX
++?пїЅ?пїЅcC
++?пїЅ?пїЅ4
++?пїЅ??
++?пїЅ?пїЅ
++????b
++?пїЅ?пїЅyY
++???пїЅb
++???пїЅ3
++???пїЅuU
++????R
++aA?пїЅ??
++bB?пїЅ?пїЅ?пїЅ
++cC?????пїЅ?пїЅ
++dD???пїЅ
++eE?пїЅ?пїЅ3
++fF?пїЅ?пїЅ
++gG???пїЅ
++hH?пїЅ??????
++iI???????пїЅ1
++jJ???пїЅ????1
++kK????
++lL?пїЅ?пїЅ1
++mM????
++nN??????
++oO????0
++p????P???пїЅ
++qQ??0
++rR???пїЅ??????
++sS????
++tT?пїЅ??
++uU????????
++vV???пїЅ
++wW???пїЅ
++xX?пїЅ??
++yY?пїЅ?пїЅ????
++zZ?пїЅ?пїЅ
+diff -r ce99f0ba5b0f -r d4cdfd0078dd src/server/worldserver/worldserver.conf.dist
+--- a/src/server/worldserver/worldserver.conf.dist	Wed Apr 27 02:04:17 2011 +0400
++++ b/src/server/worldserver/worldserver.conf.dist	Wed Apr 27 02:46:43 2011 +0400
+@@ -689,7 +689,6 @@
+ 
+ LogDB.Chat = 0
+ 
+-
+ #    ChatLogFile
+ #        Description: Log file for chat logs.
+ #        Default:     "Chat.log" - (Enabled)
+@@ -782,6 +781,194 @@
+ #
+ ###################################################################################################
+ 
++###############################################################################
++# CHAT LOGGING AND LEXICS CUTTER
++#
++#    ChatLog.Enable
++#        Enable system of chat logging.
++#        Default: 1 - on
++#                 0 - off
++#
++
++ChatLog.Enable = 1
++
++#
++#    ChatLog.DateSplit
++#        Split log files by date (filename must include $d as date placeholder).
++#        Default: 1 - split
++#                 0 - do not split
++#
++
++ChatLog.DateSplit = 1
++
++#
++#    ChatLog.UTFHeader
++#        Add UTF8 header at the beginning of new file.
++#        Default: 1 - add
++#                 0 - do not add
++#
++
++ChatLog.UTFHeader = 1
++
++#
++#    ChatLog.Ignore.Unprintable
++#        Ignore messages with unprintable characters.
++#        Default: 1 - ignore
++#                 0 - do not ignore
++#
++
++ChatLog.Ignore.Unprintable = 1
++
++#
++#    ChatLog.Lexics.Enable
++#        Enable lexics cutter in chats.
++#        Default: 1 - on
++#                 0 - off
++#
++
++ChatLog.Lexics.Enable = 1
++
++#
++#    ChatLog.Lexics.Cut.Enable
++#        Cut innormative lexics in chat.
++#        Default: 1 - cut
++#                 0 - do not cut
++#
++
++ChatLog.Lexics.Cut.Enable = 1
++
++#
++#    ChatLog.Lexics.Cut.Replacement
++#        Text shown instead of message with innormative lexics.
++#
++
++ChatLog.Lexics.Cut.Replacement = &!@^%!^&*!!!
++
++#
++#    ChatLog.Lexics.WordsFile
++#        Path to the file with words considered as innormative.
++#
++
++ChatLog.Lexics.WordsFile = innormative_words.txt
++
++#
++#    ChatLog.Lexics.AnalogsFile
++#        Path to the file with letter analogs.
++#
++
++ChatLog.Lexics.AnalogsFile = letter_analogs.txt
++
++#
++#    ChatLog.Lexics.Ignore.Spaces
++#        Ignore spaces in filtered words. Example: W O R D
++#        Default: 1 - ignore
++#                 0 - do not ignore
++#
++
++ChatLog.Lexics.Ignore.Spaces = 1
++
++#
++#    ChatLog.Lexics.Ignore.Repeats
++#        Ignore repeating symbols in filtered words. Example: WWWOOOORRRRRRDDD
++#        Default: 1 - ignore
++#                 0 - do not ignore
++#
++
++ChatLog.Lexics.Ignore.Repeats = 1
++
++#
++#    ChatLog.Lexics.Ignore.GM
++#        Ignore (do not filter) messages from GM.
++#        Default: 1 - ignore
++#                 0 - do not ignore
++#
++
++ChatLog.Lexics.Ignore.GM = 1
++
++#
++#    ChatLog.Lexics.Action
++#        Action taken when bad lexics is found.
++#        Default: 0 - log only
++#                 1 - polymorph
++#                 2 - stun
++#                 3 - instant kill
++#                 4 - leave 5 health
++#                 5 - mute
++#                 6 - stuck (works as stun + 50% health) [by KAPATEJIb]
++#                 7 - resurrection sickness [by Koshei]
++#                 8 - shear [by Koshei]
++#
++
++ChatLog.Lexics.Action = 0
++
++#
++#    ChatLog.Lexics.Action.Duration
++#        Duration of action in milliseconds.
++#        Default: 0 - no duration
++#
++
++ChatLog.Lexics.Action.Duration = 0
++
++#
++#    SETTINGS FOR DIFFERENT CHAT TYPES
++#    Available types:
++#        * Chat - common chat
++#        * Party - party chat
++#        * Guild - guild chat
++#        * Whisper - whispers
++#        * Channel - channels
++#        * Raid - raid chat
++#        * BattleGround - battleground chat
++#        * Lexics.Innormative - messages filtered by lexics cutter
++#
++#    ChatLog.*.File
++#        Log file name for given chat type.
++#
++#    ChatLog.*.Screen
++#        Output message in server console for given chat type.
++#        Default: 0 - do not show
++#                 1 - show
++#
++#    ChatLog.Lexics.*.Cut
++#        Cut lexics for given chat type (except Innormative).
++#        Default: 1 - cut
++#                 0 - do not cut
++#
++
++ChatLog.Chat.File = "main_chat-$d.log"
++ChatLog.Chat.Screen = 0
++ChatLog.Lexics.Chat.Cut = 1
++
++ChatLog.Party.File = "party_chat-$d.log"
++ChatLog.Party.Screen = 0
++ChatLog.Lexics.Party.Cut = 1
++
++ChatLog.Guild.File = "guild_chat-$d.log"
++ChatLog.Guild.Screen = 0
++ChatLog.Lexics.Guild.Cut = 1
++
++ChatLog.Whisper.File = "whisper_chat-$d.log"
++ChatLog.Whisper.Screen = 0
++ChatLog.Lexics.Whisper.Cut = 1
++
++ChatLog.Channel.File = "channel_chat-$d.log"
++ChatLog.Channel.Screen = 0
++ChatLog.Lexics.Channel.Cut = 1
++
++ChatLog.Raid.File = "raid_chat-$d.log"
++ChatLog.Raid.Screen = 0
++ChatLog.Lexics.Raid.Cut = 1
++
++ChatLog.BattleGround.File = "bg_chat-$d.log"
++ChatLog.BattleGround.Screen = 0
++ChatLog.Lexics.BattleGround.Cut = 1
++
++ChatLog.Lexics.Innormative.File = "innormative-$d.log"
++ChatLog.Lexics.Innormative.Screen = 0
++
++#
++###############################################################################
++
+ ###################################################################################################
+ # SERVER SETTINGS
+ #
